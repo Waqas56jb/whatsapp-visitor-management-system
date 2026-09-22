@@ -2,10 +2,14 @@ import { Router } from 'express';
 import { adminLogin, clientLogin } from '../controllers/authController.js';
 import {
   approveVisit,
+  blockAccount,
+  blockHost,
   createAccount,
   createHost,
   createPublicVisit,
   createVisit,
+  deleteAccount,
+  deleteHost,
   exportReport,
   getDashboardStats,
   getSettings,
@@ -20,9 +24,16 @@ import {
   revokePass,
   getReportsSummary,
   toggleAccount,
+  unblockAccount,
+  unblockHost,
   updateHost,
   updateSettings,
 } from '../controllers/adminController.js';
+import {
+  getConversation,
+  listConversations,
+  listHostConversations,
+} from '../controllers/conversationController.js';
 import {
   hostApprove,
   hostDashboard,
@@ -58,12 +69,20 @@ router.patch('/visits/:id/approve', requireAuth('admin', 'host'), approveVisit);
 router.patch('/visits/:id/reject', requireAuth('admin', 'host'), rejectVisit);
 router.get('/passes', requireAuth('admin'), listPasses);
 router.post('/passes/:id/revoke', requireAuth('admin'), revokePass);
+router.get('/conversations', requireAuth('admin'), listConversations);
+router.get('/conversations/:phoneNumber', requireAuth('admin', 'host'), getConversation);
 router.get('/hosts', requireAuth('admin'), listHosts);
 router.post('/hosts', requireAuth('admin'), createHost);
+router.patch('/hosts/:id/block', requireAuth('admin'), blockHost);
+router.patch('/hosts/:id/unblock', requireAuth('admin'), unblockHost);
 router.patch('/hosts/:id', requireAuth('admin'), updateHost);
+router.delete('/hosts/:id', requireAuth('admin'), deleteHost);
 router.get('/accounts', requireAuth('admin'), listAccounts);
 router.post('/accounts', requireAuth('admin'), createAccount);
 router.patch('/accounts/:id/toggle', requireAuth('admin'), toggleAccount);
+router.patch('/accounts/:id/block', requireAuth('admin'), blockAccount);
+router.patch('/accounts/:id/unblock', requireAuth('admin'), unblockAccount);
+router.delete('/accounts/:id', requireAuth('admin'), deleteAccount);
 router.get('/reports/summary', requireAuth('admin'), getReportsSummary);
 router.get('/reports/export', requireAuth('admin'), exportReport);
 router.get('/audit', requireAuth('admin'), listAudit);
@@ -78,3 +97,4 @@ router.get('/host/passes', requireAuth('host'), hostPasses);
 router.get('/host/history', requireAuth('host'), hostHistory);
 router.get('/host/notifications', requireAuth('host'), hostNotifications);
 router.get('/host/profile', requireAuth('host'), hostProfile);
+router.get('/host/conversations', requireAuth('host'), listHostConversations);

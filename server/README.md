@@ -88,19 +88,17 @@ Linking QR image: `GET /api/whatsapp/qr`
 4. Bot creates a pending visit and sends a reference (`VMS-2026-XXXXXX`).
 5. The **host** WhatsApp (the number stored on that host) receives the request.
 6. Host replies: `APPROVE VMS-2026-XXXXXX` or `REJECT VMS-2026-XXXXXX`
-7. Visitor receives a decline text, or an approval caption plus the QR image and backup PIN.
+7. Visitor receives a decline text, or an approval caption plus the QR image (host, date, time, location).
 8. Gate validation (REST, not WhatsApp):
 
 ```bash
 POST http://localhost:5000/api/passes/validate
-{ "pin": "984321" }
+{ "token": "<value encoded in the QR>" }
 ```
 
-or `{ "token": "<value encoded in the QR>" }`.
+Reply `menu` or `cancel` at any time to restart. Progress is stored in `whatsapp_visitor_management_conversation_states`. Full chat history is stored in `whatsapp_visitor_management_conversation_log`.
 
-Reply `menu` or `cancel` at any time to restart. Progress is stored in `whatsapp_visitor_management_conversation_states`.
-
-Approving from the admin or host portal also sends the WhatsApp PIN + QR if the visit has a visitor phone.
+Approving from the admin or host portal also sends the WhatsApp QR if the visit has a visitor phone.
 
 ## Run the full stack
 
@@ -129,8 +127,11 @@ Header for protected routes: `Authorization: Bearer <token>`
 - `GET /api/visits?status=pending&limit=5` `POST /api/visits`
 - `PATCH /api/visits/:id/approve` `PATCH /api/visits/:id/reject`
 - `GET /api/passes` `POST /api/passes/:id/revoke`
+- `GET /api/conversations` `GET /api/conversations/:phoneNumber`
 - `GET /api/hosts` `POST /api/hosts` `PATCH /api/hosts/:id`
+- `PATCH /api/hosts/:id/block` `PATCH /api/hosts/:id/unblock` `DELETE /api/hosts/:id` `{ confirm: true }`
 - `GET /api/accounts` `POST /api/accounts` `PATCH /api/accounts/:id/toggle`
+- `PATCH /api/accounts/:id/block` `PATCH /api/accounts/:id/unblock` `DELETE /api/accounts/:id` `{ confirm: true }`
 - `GET /api/reports/summary` `GET /api/reports/export?type=visits|visitors|audit`
 - `GET /api/audit` `GET /api/settings` `PUT /api/settings`
 
@@ -139,12 +140,13 @@ Header for protected routes: `Authorization: Bearer <token>`
 - `GET /api/host/visits`
 - `PATCH /api/host/visits/:id/approve` `PATCH /api/host/visits/:id/reject`
 - `GET /api/host/passes` `GET /api/host/history` `GET /api/host/notifications` `GET /api/host/profile`
+- `GET /api/host/conversations`
 
 ### Public / WhatsApp
 - `GET /api/health`
 - `POST /api/visits/public` `{ name, host, company, purpose, date, time }` (rate-limited)
 - `GET /api/whatsapp/status` → `{ connected, qrAvailable, user }`
 - `GET /api/whatsapp/qr` → PNG of the linking QR (only while waiting to scan)
-- `POST /api/passes/validate` `{ token }` or `{ pin }` — security-gate check (rate-limited)
+- `POST /api/passes/validate` `{ token }` — security-gate check (rate-limited)
 
 Gate validation reasons: `not_found`, `not_approved`, `already_used`, `expired`, `missing`.

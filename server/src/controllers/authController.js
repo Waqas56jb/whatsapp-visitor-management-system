@@ -20,6 +20,9 @@ export async function clientLogin(req, res) {
   if (!account || !(await bcrypt.compare(password, account.password_hash))) {
     return res.status(401).json({ error: 'Incorrect username or password.' });
   }
+  if (account.status === 'blocked') {
+    return res.status(403).json({ error: 'This account has been blocked. Contact your administrator.' });
+  }
   if (account.status !== 'active') {
     return res.status(403).json({ error: 'This account has been disabled. Contact your administrator.' });
   }

@@ -198,7 +198,7 @@ export default function Landing({ hidden, navLabel, onOpenLogin }) {
                   <div className="bubble qr" style={{ animationDelay: '1.7s' }}>
                     <div className="qr-box"></div>
                     <div style={{ fontSize: '10.5px', color: '#9fb0b5' }}>
-                      PIN backup: <b style={{ color: 'var(--teal)' }}>984321</b>
+                      Show this QR at the gate
                     </div>
                   </div>
                 </div>
@@ -367,12 +367,12 @@ export default function Landing({ hidden, navLabel, onOpenLogin }) {
               <div className="j-step" data-step="6">
                 <div className="j-num">06</div>
                 <h4>Secure pass issued</h4>
-                <p>A one-time QR code and backup PIN are generated and sent straight to the visitor's chat.</p>
+                <p>A one-time QR code is generated and sent straight to the visitor's chat.</p>
               </div>
               <div className="j-step" data-step="7">
                 <div className="j-num">07</div>
                 <h4>Gate validation</h4>
-                <p>Security scans the QR or enters the PIN — the server checks it in real time, no guessing.</p>
+                <p>Security scans the QR — the server checks the token in real time, no guessing.</p>
               </div>
               <div className="j-step" data-step="8">
                 <div className="j-num">08</div>
@@ -402,8 +402,8 @@ export default function Landing({ hidden, navLabel, onOpenLogin }) {
               <div className="feat-ic" style={{ background: '#E9FBF6', color: '#0F9E7F' }}>
                 🔑
               </div>
-              <h4>Dual-factor entry pass</h4>
-              <p>A QR code with a numeric PIN fallback, so the gate never grinds to a halt.</p>
+              <h4>Secure QR entry pass</h4>
+              <p>A one-time QR token, so the gate never grinds to a halt.</p>
             </div>
             <div className="feat-card reveal">
               <div className="feat-ic" style={{ background: '#FFF1E8', color: 'var(--coral)' }}>
@@ -574,7 +574,7 @@ export default function Landing({ hidden, navLabel, onOpenLogin }) {
             </div>
             <div className="t-card reveal">
               <div className="stars">★★★★★</div>
-              <p>"The PIN backup matters more than we expected — the camera at our gate is old and it never blocks anyone now."</p>
+              <p>"The QR pass matters more than we expected — the camera at our gate is old and it never blocks anyone now."</p>
               <div className="t-who">
                 <div className="t-avatar"></div>
                 <div>

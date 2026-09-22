@@ -8,7 +8,13 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const { pool } = await import('../src/config/db.js');
 
-const files = ['init.sql', '002_whatsapp.sql'];
+const files = [
+  'init.sql',
+  '002_whatsapp.sql',
+  '003_remove_pin.sql',
+  '004_conversation_log.sql',
+  '005_add_blocked_status.sql',
+];
 
 try {
   for (const file of files) {

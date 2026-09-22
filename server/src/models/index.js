@@ -30,6 +30,9 @@ export const Account = {
        WHERE id = $1 RETURNING *`,
       [id]
     ),
+  setStatus: (id, status) =>
+    queryOne(`UPDATE ${T.accounts} SET status = $2 WHERE id = $1 RETURNING *`, [id, status]),
+  remove: (id) => queryOne(`DELETE FROM ${T.accounts} WHERE id = $1 RETURNING *`, [id]),
 };
 
 export const Host = {
@@ -71,6 +74,9 @@ export const Host = {
     vals.push(id);
     return queryOne(`UPDATE ${T.hosts} SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals);
   },
+  setStatus: (id, status) =>
+    queryOne(`UPDATE ${T.hosts} SET status = $2 WHERE id = $1 RETURNING *`, [id, status]),
+  remove: (id) => queryOne(`DELETE FROM ${T.hosts} WHERE id = $1 RETURNING *`, [id]),
 };
 
 export const Visitor = {
@@ -142,8 +148,6 @@ export const Visit = {
   findByRef: (ref) =>
     queryOne(`${VISIT_SELECT} WHERE LOWER(vs.ref_number) = LOWER($1)`, [String(ref || '').trim()]),
   findByToken: (token) => queryOne(`${VISIT_SELECT} WHERE vs.qr_token = $1`, [token]),
-  findByPin: (pin) =>
-    queryOne(`${VISIT_SELECT} WHERE vs.pin = $1 ORDER BY vs.created_at DESC LIMIT 1`, [pin]),
   listByVisitorPhone: (phone, limit = 5) =>
     query(
       `${VISIT_SELECT}
@@ -155,8 +159,8 @@ export const Visit = {
   create: (row) =>
     queryOne(
       `INSERT INTO ${T.visits}
-        (ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, pin, qr_token, visit_type, visitor_phone)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        (ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, qr_token, visit_type, visitor_phone)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [
         row.ref_number,
         row.visitor_id,
@@ -165,18 +169,17 @@ export const Visit = {
         row.visit_date,
         row.visit_time,
         row.status || 'pending',
-        row.pin || null,
         row.qr_token || null,
         row.visit_type === 'social' ? 'social' : 'official',
         row.visitor_phone || null,
       ]
     ),
-  decide: (id, status, pin, qr_token) =>
+  decide: (id, status, qr_token) =>
     queryOne(
       `UPDATE ${T.visits}
-       SET status = $2, pin = COALESCE($3, pin), qr_token = COALESCE($4, qr_token), decided_at = NOW()
+       SET status = $2, qr_token = COALESCE($3, qr_token), decided_at = NOW()
        WHERE id = $1 RETURNING *`,
-      [id, status, pin, qr_token]
+      [id, status, qr_token]
     ),
   markUsed: (id) =>
     queryOne(
@@ -201,6 +204,93 @@ export const ConversationState = {
       [normalizePhone(phone), current_step, JSON.stringify(collected_data || {})]
     ),
   clear: (phone) => query(`DELETE FROM ${T.conversations} WHERE phone_number = $1`, [normalizePhone(phone)]),
+};
+
+export const ConversationLog = {
+  add: ({ phone_number, visit_id = null, direction, message_text }) =>
+    queryOne(
+      `INSERT INTO ${T.conversationLog} (phone_number, visit_id, direction, message_text)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [normalizePhone(phone_number), visit_id || null, direction, String(message_text || '')]
+    ),
+  linkVisit: (phone, visitId, windowHours = 24) =>
+    query(
+      `UPDATE ${T.conversationLog}
+       SET visit_id = $2
+       WHERE regexp_replace(phone_number, '[^0-9]', '', 'g') = $1
+         AND (visit_id IS NULL OR visit_id = $2)
+         AND created_at >= NOW() - ($3::text || ' hours')::interval`,
+      [normalizePhone(phone), visitId, String(windowHours)]
+    ),
+  listByPhone: (phone) =>
+    query(
+      `SELECT id, phone_number, visit_id, direction, message_text, created_at
+       FROM ${T.conversationLog}
+       WHERE regexp_replace(phone_number, '[^0-9]', '', 'g') = $1
+       ORDER BY created_at ASC, id ASC`,
+      [normalizePhone(phone)]
+    ),
+  phoneBelongsToHost: async (phone, hostId) => {
+    const row = await queryOne(
+      `SELECT vs.id
+       FROM ${T.visits} vs
+       WHERE vs.host_id = $2
+         AND (
+           regexp_replace(COALESCE(vs.visitor_phone, ''), '[^0-9]', '', 'g') = $1
+           OR vs.id IN (
+             SELECT visit_id FROM ${T.conversationLog}
+             WHERE regexp_replace(phone_number, '[^0-9]', '', 'g') = $1
+               AND visit_id IS NOT NULL
+           )
+         )
+       LIMIT 1`,
+      [normalizePhone(phone), hostId]
+    );
+    return Boolean(row);
+  },
+  listThreads: (hostId) => {
+    const hostFilter = hostId
+      ? `WHERE regexp_replace(cl.phone_number, '[^0-9]', '', 'g') IN (
+           SELECT regexp_replace(COALESCE(visitor_phone, ''), '[^0-9]', '', 'g')
+           FROM ${T.visits} WHERE host_id = $1
+         )
+         OR cl.visit_id IN (SELECT id FROM ${T.visits} WHERE host_id = $1)`
+      : '';
+    const params = hostId ? [hostId] : [];
+    return query(
+      `SELECT
+         cl.phone_number AS phone,
+         COUNT(*)::int AS message_count,
+         MAX(cl.created_at) AS last_at,
+         (
+           SELECT c2.message_text FROM ${T.conversationLog} c2
+           WHERE regexp_replace(c2.phone_number, '[^0-9]', '', 'g')
+             = regexp_replace(cl.phone_number, '[^0-9]', '', 'g')
+           ORDER BY c2.created_at DESC, c2.id DESC LIMIT 1
+         ) AS last_message,
+         COALESCE(
+           (
+             SELECT vis.name FROM ${T.visits} vs
+             JOIN ${T.visitors} vis ON vis.id = vs.visitor_id
+             WHERE regexp_replace(COALESCE(vs.visitor_phone, vis.phone, ''), '[^0-9]', '', 'g')
+               = regexp_replace(cl.phone_number, '[^0-9]', '', 'g')
+             ${hostId ? 'AND vs.host_id = $1' : ''}
+             ORDER BY vs.created_at DESC LIMIT 1
+           ),
+           (
+             SELECT vis.name FROM ${T.visitors} vis
+             WHERE regexp_replace(COALESCE(vis.phone, ''), '[^0-9]', '', 'g')
+               = regexp_replace(cl.phone_number, '[^0-9]', '', 'g')
+             ORDER BY vis.created_at DESC LIMIT 1
+           )
+         ) AS visitor_name
+       FROM ${T.conversationLog} cl
+       ${hostFilter}
+       GROUP BY cl.phone_number
+       ORDER BY last_at DESC`,
+      params
+    );
+  },
 };
 
 export const Audit = {

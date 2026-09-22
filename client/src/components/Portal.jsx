@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowLeft,
   Bell,
+  CalendarDays,
   Check,
   CheckCircle2,
   ClipboardList,
@@ -11,18 +12,22 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessagesSquare,
   QrCode,
   Settings,
   ShieldCheck,
+  Sparkles,
   Users,
   X,
 } from 'lucide-react';
+import Conversations from './Conversations';
 import { initials } from '../lib/db';
 import api, { setClientToken } from '../api/client';
 
 const titles = {
   overview: ['Overview', 'Welcome back'],
   requests: ['Visit requests', 'Approve or reject bookings sent to you'],
+  conversations: ['Conversations', 'WhatsApp threads for your visitors'],
   passes: ['My passes', 'Active QR passes for your approved visitors'],
   history: ['History', 'Everyone who has visited you'],
   notifications: ['Notifications', 'Recent updates'],
@@ -157,6 +162,12 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                 {pending.length || ''}
               </span>
             </button>
+            <button className={'ap-link' + (view === 'conversations' ? ' active' : '')} onClick={() => switchView('conversations')}>
+              <span className="ic">
+                <MessagesSquare size={18} strokeWidth={1.85} />
+              </span>
+              Conversations
+            </button>
             <button className={'ap-link' + (view === 'passes' ? ' active' : '')} onClick={() => switchView('passes')}>
               <span className="ic">
                 <QrCode size={18} strokeWidth={1.85} />
@@ -219,6 +230,19 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
 
           <div className="ap-content">
             <section className={'ap-view' + (view === 'overview' ? ' active' : '')} id="view-overview">
+              <div className="dash-hero">
+                <div>
+                  <span className="dash-kicker">
+                    <Sparkles size={14} strokeWidth={2.2} /> Host overview
+                  </span>
+                  <h3>Welcome back{currentUser?.name ? `, ${currentUser.name.split(' ')[0]}` : ''}</h3>
+                  <p>Approve visitors, issue passes, and keep your lobby moving.</p>
+                </div>
+                <div className="dash-hero-meta">
+                  <CalendarDays size={18} strokeWidth={1.9} />
+                  {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                </div>
+              </div>
               <div className="ap-stat-row">
                 <div className="ap-stat-card">
                   <div className="top">
@@ -344,8 +368,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                           <b style={{ fontSize: 15, letterSpacing: 0, color: '#fff' }}>{v.visitor}</b>
                         </div>
                         <div className="ap-pass-pin" style={{ marginTop: 12 }}>
-                          <span>Backup PIN</span>
-                          <b>{v.pin}</b>
+                          <span>QR reference</span>
+                          <b style={{ fontSize: 15, letterSpacing: 0 }}>{v.ref}</b>
                         </div>
                       </div>
                     ))
@@ -356,6 +380,10 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                   )}
                 </div>
               </div>
+            </section>
+
+            <section className={'ap-view' + (view === 'conversations' ? ' active' : '')} id="view-conversations">
+              {view === 'conversations' ? <Conversations /> : null}
             </section>
 
             <section className={'ap-view' + (view === 'history' ? ' active' : '')} id="view-history">

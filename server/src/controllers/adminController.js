@@ -116,7 +116,7 @@ export async function listPasses(req, res) {
 export async function revokePass(req, res) {
   const visit = await Visit.findById(req.params.id);
   if (!visit) return res.status(404).json({ error: 'Pass not found' });
-  await Visit.decide(visit.id, 'rejected', visit.pin, visit.qr_token);
+  await Visit.decide(visit.id, 'rejected', visit.qr_token);
   await Audit.add({
     actor: actorName(req),
     action: 'Revoked pass',
@@ -189,6 +189,68 @@ export async function toggleAccount(req, res) {
   if (!account) return res.status(404).json({ error: 'Account not found' });
   await Audit.add({ actor: actorName(req), action: 'Updated account status', details: `${account.username} → ${account.status}` });
   res.json(mapAccount(account));
+}
+
+function requireConfirm(req, res) {
+  if (req.body?.confirm !== true) {
+    res.status(400).json({ error: 'Confirmation required' });
+    return false;
+  }
+  return true;
+}
+
+export async function blockHost(req, res) {
+  const host = await Host.setStatus(req.params.id, 'blocked');
+  if (!host) return res.status(404).json({ error: 'Host not found' });
+  await Audit.add({ actor: actorName(req), action: 'Blocked host', details: `${host.name} (${host.department})` });
+  res.json(mapHost(host));
+}
+
+export async function unblockHost(req, res) {
+  const host = await Host.setStatus(req.params.id, 'active');
+  if (!host) return res.status(404).json({ error: 'Host not found' });
+  await Audit.add({ actor: actorName(req), action: 'Unblocked host', details: `${host.name} (${host.department})` });
+  res.json(mapHost(host));
+}
+
+export async function deleteHost(req, res) {
+  if (!requireConfirm(req, res)) return;
+  const existing = await Host.findById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Host not found' });
+  const deleted = await Host.remove(req.params.id);
+  await Audit.add({
+    actor: actorName(req),
+    action: 'Deleted host',
+    details: `${existing.name} · ${existing.department} · ${existing.phone || 'no phone'}`,
+  });
+  res.json({ ok: true, deleted: mapHost(deleted) });
+}
+
+export async function blockAccount(req, res) {
+  const account = await Account.setStatus(req.params.id, 'blocked');
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+  await Audit.add({ actor: actorName(req), action: 'Blocked account', details: `${account.username} (${account.name})` });
+  res.json(mapAccount(account));
+}
+
+export async function unblockAccount(req, res) {
+  const account = await Account.setStatus(req.params.id, 'active');
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+  await Audit.add({ actor: actorName(req), action: 'Unblocked account', details: `${account.username} (${account.name})` });
+  res.json(mapAccount(account));
+}
+
+export async function deleteAccount(req, res) {
+  if (!requireConfirm(req, res)) return;
+  const existing = await Account.findById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Account not found' });
+  const deleted = await Account.remove(req.params.id);
+  await Audit.add({
+    actor: actorName(req),
+    action: 'Deleted account',
+    details: `${existing.name} · ${existing.username} · ${existing.role}`,
+  });
+  res.json({ ok: true, deleted: mapAccount(deleted) });
 }
 
 export async function getReportsSummary(req, res) {

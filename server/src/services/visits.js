@@ -1,10 +1,11 @@
 import {
   Audit,
+  ConversationLog,
   Host,
   Visit,
   Visitor,
 } from '../models/index.js';
-import { generatePin, generateQrToken, generateRef } from '../utils/generateToken.js';
+import { generateQrToken, generateRef } from '../utils/generateToken.js';
 import { formatDate } from '../utils/mappers.js';
 import { normalizePhone } from '../utils/phone.js';
 import {
@@ -76,6 +77,11 @@ export async function createPendingVisit({
     await notifyVisitorSubmitted(full).catch((err) => console.error('Visitor submit notify failed:', err.message));
     await notifyHostNewVisit(full).catch((err) => console.error('Host notify failed:', err.message));
   }
+  if (phone) {
+    await ConversationLog.linkVisit(phone, created.id).catch((err) =>
+      console.error('Conversation log link failed:', err.message)
+    );
+  }
   return full;
 }
 
@@ -96,9 +102,8 @@ export async function decideVisit({ visitId, decision, actor = 'Host', actorHost
   }
 
   const approved = decision === 'approved';
-  const pin = approved ? generatePin() : visit.pin;
   const qr_token = approved ? generateQrToken() : visit.qr_token;
-  await Visit.decide(visit.id, approved ? 'approved' : 'rejected', pin, qr_token);
+  await Visit.decide(visit.id, approved ? 'approved' : 'rejected', qr_token);
   await Audit.add({
     actor,
     action: approved ? 'Approved visit' : 'Rejected visit',
@@ -114,6 +119,12 @@ export async function decideVisit({ visitId, decision, actor = 'Host', actorHost
   if (notifyHostPhone) {
     await notifyHostDecisionResult(notifyHostPhone, full, approved ? 'approved' : 'rejected').catch((err) =>
       console.error('Host decision ack failed:', err.message)
+    );
+  }
+  const visitorPhone = full.visitor_phone || full.visitor_profile_phone;
+  if (visitorPhone) {
+    await ConversationLog.linkVisit(visitorPhone, full.id).catch((err) =>
+      console.error('Conversation log link failed:', err.message)
     );
   }
   return { visit: full, alreadyDecided: false };
@@ -143,8 +154,8 @@ function todayStamp() {
   return `${y}-${m}-${day}`;
 }
 
-export async function validatePass({ token, pin }) {
-  const visit = token ? await Visit.findByToken(String(token).trim()) : await Visit.findByPin(String(pin || '').trim());
+export async function validatePass({ token }) {
+  const visit = token ? await Visit.findByToken(String(token).trim()) : null;
   if (!visit) {
     return { ok: false, reason: 'not_found', error: 'Pass not found' };
   }
@@ -184,7 +195,6 @@ export async function validatePass({ token, pin }) {
       date: formatDate(full.visit_date),
       time: full.visit_time,
       purpose: full.purpose,
-      pin: full.pin,
       status: 'used',
     },
   };

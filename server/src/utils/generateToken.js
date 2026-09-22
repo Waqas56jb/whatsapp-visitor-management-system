@@ -1,10 +1,6 @@
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 
-export function generatePin() {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
 export function generateQrToken() {
   return crypto.randomBytes(32).toString('hex');
 }

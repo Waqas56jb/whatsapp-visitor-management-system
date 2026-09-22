@@ -1,4 +1,4 @@
-import { Host } from '../models/index.js';
+import { ConversationLog, Host } from '../models/index.js';
 import { phoneFromJid } from '../utils/phone.js';
 import { decideVisitByRef } from '../services/visits.js';
 import { handleIncomingMessage } from './conversationEngine.js';
@@ -62,8 +62,13 @@ export function attachMessageHandler(sock) {
         if (jid.endsWith('@g.us') || jid === 'status@broadcast' || jid.endsWith('@broadcast')) continue;
         const from = phoneFromJid(jid);
         if (!from) continue;
-        if (!allowMessage(from)) continue;
         const text = extractText(msg);
+        await ConversationLog.add({
+          phone_number: from,
+          direction: 'incoming',
+          message_text: text || '[media]',
+        }).catch((err) => console.error('Conversation incoming log failed:', err.message));
+        if (!allowMessage(from)) continue;
         if (await handleHostCommand(from, text)) continue;
         await handleIncomingMessage({ from, text, jid });
       } catch (err) {

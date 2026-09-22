@@ -22,7 +22,6 @@ ALTER TABLE whatsapp_visitor_management_visitors
   ADD COLUMN IF NOT EXISTS phone TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_wvm_visits_qr_token ON whatsapp_visitor_management_visits(qr_token);
-CREATE INDEX IF NOT EXISTS idx_wvm_visits_pin ON whatsapp_visitor_management_visits(pin);
 CREATE INDEX IF NOT EXISTS idx_wvm_visits_visitor_phone ON whatsapp_visitor_management_visits(visitor_phone);
 CREATE INDEX IF NOT EXISTS idx_wvm_hosts_phone ON whatsapp_visitor_management_hosts(phone);
 CREATE INDEX IF NOT EXISTS idx_wvm_conversation_phone ON whatsapp_visitor_management_conversation_states(phone_number);

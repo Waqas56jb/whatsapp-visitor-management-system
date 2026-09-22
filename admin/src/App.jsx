@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  Ban,
   BarChart3,
   Building2,
+  CalendarDays,
   Check,
   ClipboardList,
   Clock,
@@ -13,6 +15,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessagesSquare,
   MoreHorizontal,
   Plus,
   QrCode,
@@ -20,14 +23,16 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Sparkles,
   TrendingUp,
   UserCheck,
   UserPlus,
   Users,
   X,
 } from 'lucide-react';
+import { toast as notify } from 'react-toastify';
+import Conversations from './components/Conversations';
 import LoginScreen from './components/LoginScreen';
-import Toast from './components/Toast';
 import api, { getAdminToken, setAdminToken } from './api/client';
 import { initials } from './lib/db';
 
@@ -36,6 +41,7 @@ const titles = {
   visitors: ['Visitors', 'Everyone who has ever requested a visit'],
   visits: ['Visit requests', 'Approve, reject or review bookings'],
   passes: ['QR & Passes', 'Every access token issued'],
+  conversations: ['Conversations', 'Full WhatsApp threads with visitors'],
   hosts: ['Hosts', 'People who approve visit requests'],
   accounts: ['Client accounts', 'Logins you issue to clients and staff'],
   reports: ['Reports', 'Trends and exportable records'],
@@ -43,10 +49,36 @@ const titles = {
   settings: ['Settings', 'Organization preferences'],
 };
 
+function tokenRef(token) {
+  if (!token) return '—';
+  if (token.length <= 14) return token;
+  return `${token.slice(0, 8)}…${token.slice(-4)}`;
+}
+
 function Badge({ status }) {
-  const map = { approved: 'approved', pending: 'pending', rejected: 'rejected', active: 'active', expired: 'expired', used: 'used', revoked: 'revoked' };
+  const map = {
+    approved: 'approved',
+    pending: 'pending',
+    rejected: 'rejected',
+    active: 'active',
+    expired: 'expired',
+    used: 'used',
+    revoked: 'revoked',
+    blocked: 'blocked',
+    disabled: 'disabled',
+    inactive: 'inactive',
+  };
   const cls = map[status] || 'active';
-  const Icon = status === 'approved' || status === 'active' || status === 'used' ? Check : status === 'pending' ? Clock : status === 'rejected' || status === 'revoked' ? X : ShieldCheck;
+  const Icon =
+    status === 'blocked'
+      ? Ban
+      : status === 'approved' || status === 'active' || status === 'used'
+        ? Check
+        : status === 'pending'
+          ? Clock
+          : status === 'rejected' || status === 'revoked'
+            ? X
+            : ShieldCheck;
   return (
     <span className={`badge ${cls}`}>
       <Icon size={11} strokeWidth={2.6} />
@@ -81,7 +113,6 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [view, setView] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [toasts, setToasts] = useState([]);
   const [visitFilter, setVisitFilter] = useState('all');
   const [modal, setModal] = useState(null);
   const [detailTitle, setDetailTitle] = useState('Details');
@@ -142,9 +173,8 @@ export default function App() {
   }, [loggedIn]);
 
   function toast(msg, isErr) {
-    const id = Date.now() + Math.random();
-    setToasts((list) => [...list, { id, msg, isErr }]);
-    setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 3200);
+    if (isErr) notify.error(msg);
+    else notify.success(msg);
   }
 
   function switchView(name) {
@@ -222,21 +252,42 @@ export default function App() {
           </span>
         </div>
         <div className="detail-row">
-          <span className="k">PIN</span>
-          <span className="v">{v.pin}</span>
+          <span className="k">QR token</span>
+          <span className="v">{tokenRef(v.qrToken)}</span>
         </div>
       </>
     );
     openModal('detailModal');
   }
 
-  async function toggleHostStatus(id) {
+  async function blockHost(id) {
     try {
-      await api.patch(`/hosts/${id}`, { toggleStatus: true });
+      await api.patch(`/hosts/${id}/block`);
       await fetchAll();
-      toast('Host status updated');
+      toast('Host blocked');
     } catch {
-      toast('Could not update host', true);
+      toast('Could not block host', true);
+    }
+  }
+
+  async function unblockHost(id) {
+    try {
+      await api.patch(`/hosts/${id}/unblock`);
+      await fetchAll();
+      toast('Host unblocked');
+    } catch {
+      toast('Could not unblock host', true);
+    }
+  }
+
+  async function deleteHost(id, name) {
+    if (!window.confirm(`Delete host ${name}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/hosts/${id}`, { data: { confirm: true } });
+      await fetchAll();
+      toast('Host deleted');
+    } catch (err) {
+      toast(err.response?.data?.error || 'Could not delete host', true);
     }
   }
 
@@ -312,13 +363,34 @@ export default function App() {
     }
   }
 
-  async function toggleAccount(id) {
+  async function blockAccount(id) {
     try {
-      await api.patch(`/accounts/${id}/toggle`);
+      await api.patch(`/accounts/${id}/block`);
       await fetchAll();
-      toast('Account updated');
+      toast('Account blocked');
     } catch {
-      toast('Could not update account', true);
+      toast('Could not block account', true);
+    }
+  }
+
+  async function unblockAccount(id) {
+    try {
+      await api.patch(`/accounts/${id}/unblock`);
+      await fetchAll();
+      toast('Account unblocked');
+    } catch {
+      toast('Could not unblock account', true);
+    }
+  }
+
+  async function deleteAccount(id, name) {
+    if (!window.confirm(`Delete account ${name}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/accounts/${id}`, { data: { confirm: true } });
+      await fetchAll();
+      toast('Account deleted');
+    } catch (err) {
+      toast(err.response?.data?.error || 'Could not delete account', true);
     }
   }
 
@@ -414,6 +486,9 @@ export default function App() {
               <NavBtn active={view === 'passes'} icon={QrCode} onClick={() => switchView('passes')}>
                 QR &amp; Passes
               </NavBtn>
+              <NavBtn active={view === 'conversations'} icon={MessagesSquare} onClick={() => switchView('conversations')}>
+                Conversations
+              </NavBtn>
               <div className="sb-group-label">People</div>
               <NavBtn active={view === 'hosts'} icon={UserCheck} onClick={() => switchView('hosts')}>
                 Hosts
@@ -470,6 +545,19 @@ export default function App() {
 
             <div className="content">
               <section className={'view' + (view === 'dashboard' ? ' active' : '')} id="view-dashboard">
+                <div className="dash-hero">
+                  <div>
+                    <span className="dash-kicker">
+                      <Sparkles size={14} strokeWidth={2.2} /> Command center
+                    </span>
+                    <h3>Welcome back</h3>
+                    <p>Live visitor traffic, pending approvals, and gate activity in one view.</p>
+                  </div>
+                  <div className="dash-hero-meta">
+                    <CalendarDays size={18} strokeWidth={1.9} />
+                    {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                  </div>
+                </div>
                 <div className="stat-row">
                   <div className="stat-card">
                     <div className="top">
@@ -781,7 +869,7 @@ export default function App() {
                         <tr>
                           <th>Reference</th>
                           <th>Visitor</th>
-                          <th>PIN</th>
+                          <th>QR token</th>
                           <th>Issued</th>
                           <th>Status</th>
                           <th>Actions</th>
@@ -793,7 +881,7 @@ export default function App() {
                             <tr key={v.id}>
                               <td className="cell-main">{v.ref}</td>
                               <td>{v.visitor}</td>
-                              <td>{v.pin}</td>
+                              <td>{tokenRef(v.qrToken)}</td>
                               <td>{v.date}</td>
                               <td>
                                 <Badge status="active" />
@@ -815,6 +903,23 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              </section>
+
+              <section className={'view' + (view === 'conversations' ? ' active' : '')} id="view-conversations">
+                <div className="panel">
+                  <div className="panel-head">
+                    <div className="panel-title">
+                      <span className="panel-ic">
+                        <MessagesSquare size={16} strokeWidth={2} />
+                      </span>
+                      <div>
+                        <h3>WhatsApp conversations</h3>
+                        <p>Every incoming and outgoing message, grouped by visitor</p>
+                      </div>
+                    </div>
+                  </div>
+                  {view === 'conversations' ? <Conversations /> : null}
                 </div>
               </section>
 
@@ -865,9 +970,20 @@ export default function App() {
                                   <Badge status={h.status} />
                                 </td>
                                 <td>
-                                  <button className="btn-icon" onClick={() => toggleHostStatus(h.id)} aria-label="Toggle host status">
-                                    <MoreHorizontal size={16} />
-                                  </button>
+                                  <div className="row-actions">
+                                    {h.status === 'blocked' ? (
+                                      <button className="btn btn-sm btn-ghost" onClick={() => unblockHost(h.id)}>
+                                        Unblock
+                                      </button>
+                                    ) : (
+                                      <button className="btn btn-sm btn-ghost" onClick={() => blockHost(h.id)}>
+                                        Block
+                                      </button>
+                                    )}
+                                    <button className="btn btn-sm btn-danger" onClick={() => deleteHost(h.id, h.name)}>
+                                      Delete
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -925,9 +1041,20 @@ export default function App() {
                                 <Badge status={a.status} />
                               </td>
                               <td>
-                                <button className="btn btn-sm btn-ghost" onClick={() => toggleAccount(a.id)}>
-                                  {a.status === 'active' ? 'Disable' : 'Enable'}
-                                </button>
+                                <div className="row-actions">
+                                  {a.status === 'blocked' ? (
+                                    <button className="btn btn-sm btn-ghost" onClick={() => unblockAccount(a.id)}>
+                                      Unblock
+                                    </button>
+                                  ) : (
+                                    <button className="btn btn-sm btn-ghost" onClick={() => blockAccount(a.id)}>
+                                      Block
+                                    </button>
+                                  )}
+                                  <button className="btn btn-sm btn-danger" onClick={() => deleteAccount(a.id, a.name)}>
+                                    Delete
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))
@@ -941,9 +1068,7 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
-                  <p className="mini-note">
-                    Passwords are stored locally in this browser for demo purposes. Share the username/password with your client so they can sign into <b>client.html</b>.
-                  </p>
+                  <p className="mini-note">Share the username and password with your host so they can sign into the client portal.</p>
                 </div>
               </section>
 
@@ -1145,14 +1270,14 @@ export default function App() {
                         <AlertTriangle size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>Danger zone</h3>
-                        <p>Resets all locally stored demo data</p>
+                        <h3>Refresh data</h3>
+                        <p>Reload visits, hosts, and settings from the server</p>
                       </div>
                     </div>
                   </div>
                   <div style={{ padding: '22px 24px' }}>
                     <button className="btn btn-danger" onClick={resetAllData}>
-                      Reset demo data
+                      Refresh from server
                     </button>
                   </div>
                 </div>
@@ -1324,8 +1449,6 @@ export default function App() {
           </div>
         </div>
       </div>
-
-      <Toast toasts={toasts} />
     </>
   );
 }

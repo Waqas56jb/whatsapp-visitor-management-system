@@ -57,22 +57,22 @@ async function seed() {
   const v2 = await ensureVisitor('Grace Mokoena', 'Aurora Retail Group');
   const v3 = await ensureVisitor('Daniel Osei', 'Pinnacle Logistics');
 
-  async function ensureVisit(ref, visitorId, hostId, purpose, date, time, status, pin) {
+  async function ensureVisit(ref, visitorId, hostId, purpose, date, time, status) {
     const existing = await queryOne(`SELECT * FROM ${T.visits} WHERE ref_number = $1`, [ref]);
     if (existing) return existing;
     return queryOne(
-      `INSERT INTO ${T.visits} (ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, pin, qr_token, decided_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, CASE WHEN $7 = 'pending' THEN NULL ELSE NOW() END)
+      `INSERT INTO ${T.visits} (ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, qr_token, decided_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $7 = 'pending' THEN NULL ELSE NOW() END)
        RETURNING *`,
-      [ref, visitorId, hostId, purpose, date, time, status, pin, status === 'approved' ? 'seed-token-' + ref : null]
+      [ref, visitorId, hostId, purpose, date, time, status, status === 'approved' ? 'seed-token-' + ref : null]
     );
   }
 
-  await ensureVisit('VMS-2026-001245', v1.id, h1.id, 'Technology Planning Meeting', '2026-09-22', '10:00', 'approved', '984321');
-  await ensureVisit('VMS-2026-002210', v2.id, h1.id, 'Interview — Ops Manager', '2026-09-22', '13:30', 'pending', '552017');
-  await ensureVisit('VMS-2026-003101', v2.id, h2.id, 'Interview — Ops Manager', '2026-09-22', '13:30', 'pending', '441902');
-  await ensureVisit('VMS-2026-004018', v3.id, h3.id, 'Vendor onboarding', '2026-09-21', '09:15', 'rejected', '330771');
-  await ensureVisit('VMS-2026-005540', v1.id, h1.id, 'Follow-up review', '2026-09-18', '11:00', 'approved', '219884');
+  await ensureVisit('VMS-2026-001245', v1.id, h1.id, 'Technology Planning Meeting', '2026-09-22', '10:00', 'approved');
+  await ensureVisit('VMS-2026-002210', v2.id, h1.id, 'Interview — Ops Manager', '2026-09-22', '13:30', 'pending');
+  await ensureVisit('VMS-2026-003101', v2.id, h2.id, 'Interview — Ops Manager', '2026-09-22', '13:30', 'pending');
+  await ensureVisit('VMS-2026-004018', v3.id, h3.id, 'Vendor onboarding', '2026-09-21', '09:15', 'rejected');
+  await ensureVisit('VMS-2026-005540', v1.id, h1.id, 'Follow-up review', '2026-09-18', '11:00', 'approved');
 
   const auditExists = await queryOne(`SELECT id FROM ${T.audit} LIMIT 1`);
   if (!auditExists) {

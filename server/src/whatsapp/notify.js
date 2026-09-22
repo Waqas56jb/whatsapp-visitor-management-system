@@ -1,6 +1,6 @@
 import { formatDate, formatDateNice } from '../utils/mappers.js';
 import { generateQrBuffer } from '../utils/generateToken.js';
-import { Settings } from '../models/index.js';
+import { Audit, Host, Settings } from '../models/index.js';
 import { sendImage, sendText } from './sendMessage.js';
 
 async function locationLabel() {
@@ -10,6 +10,16 @@ async function locationLabel() {
 }
 
 export async function notifyHostNewVisit(visit) {
+  const host = visit.host_id ? await Host.findById(visit.host_id) : null;
+  if (host?.status === 'blocked') {
+    await Audit.add({
+      actor: 'System',
+      action: 'Host is blocked — notification skipped',
+      details: `${visit.ref_number} → ${visit.host_name}`,
+    });
+    return;
+  }
+
   const phone = visit.host_phone;
   if (!phone) {
     console.warn(`Host ${visit.host_name} has no phone — skipped WhatsApp notify`);
@@ -57,8 +67,6 @@ export async function notifyVisitorApproved(visit) {
     `Date: ${formatDateNice(visit.visit_date) || formatDate(visit.visit_date)}`,
     `Time: ${visit.visit_time}`,
     `Location: ${location}`,
-    `Backup PIN: ${visit.pin}`,
-    'Please show this QR code or PIN at the gate.',
   ].join('\n');
 
   if (!visit.qr_token) {

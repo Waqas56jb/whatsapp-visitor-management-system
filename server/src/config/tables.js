@@ -9,4 +9,5 @@ export const T = {
   audit: `${prefix}audit_log`,
   settings: `${prefix}settings`,
   conversations: `${prefix}conversation_states`,
+  conversationLog: `${prefix}conversation_log`,
 };
