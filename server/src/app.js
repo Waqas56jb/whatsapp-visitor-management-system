@@ -6,7 +6,24 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 const app = express();
 
-const origins = [process.env.CLIENT_ORIGIN, process.env.ADMIN_ORIGIN, 'http://localhost:5173', 'http://localhost:5174'].filter(Boolean);
+const extraOrigins = String(process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+const origins = [
+  ...new Set(
+    [
+      process.env.CLIENT_ORIGIN,
+      process.env.ADMIN_ORIGIN,
+      ...extraOrigins,
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'https://marvelous-determination-production-9ce0.up.railway.app',
+      'https://authentic-vision-production-7a37.up.railway.app',
+    ].filter(Boolean)
+  ),
+];
 
 app.use(
   cors({
