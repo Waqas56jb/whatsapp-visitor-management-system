@@ -8,4 +8,5 @@ export const T = {
   visits: `${prefix}visits`,
   audit: `${prefix}audit_log`,
   settings: `${prefix}settings`,
+  conversations: `${prefix}conversation_states`,
 };

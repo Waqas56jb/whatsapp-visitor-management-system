@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_visitor_management_visitors (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   company TEXT NOT NULL DEFAULT '—',
+  phone TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -47,10 +48,22 @@ CREATE TABLE IF NOT EXISTS whatsapp_visitor_management_visits (
   visit_date DATE NOT NULL,
   visit_time TEXT NOT NULL DEFAULT '—',
   status TEXT NOT NULL DEFAULT 'pending',
+  visit_type TEXT NOT NULL DEFAULT 'official',
+  visitor_phone TEXT,
   pin TEXT,
   qr_token TEXT,
+  used_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_visitor_management_conversation_states (
+  id SERIAL PRIMARY KEY,
+  phone_number TEXT NOT NULL UNIQUE,
+  current_step TEXT NOT NULL DEFAULT 'menu',
+  collected_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS whatsapp_visitor_management_audit_log (
@@ -72,8 +85,13 @@ CREATE TABLE IF NOT EXISTS whatsapp_visitor_management_settings (
 CREATE INDEX IF NOT EXISTS idx_wvm_visits_status ON whatsapp_visitor_management_visits(status);
 CREATE INDEX IF NOT EXISTS idx_wvm_visits_host ON whatsapp_visitor_management_visits(host_id);
 CREATE INDEX IF NOT EXISTS idx_wvm_visits_visitor ON whatsapp_visitor_management_visits(visitor_id);
+CREATE INDEX IF NOT EXISTS idx_wvm_visits_qr_token ON whatsapp_visitor_management_visits(qr_token);
+CREATE INDEX IF NOT EXISTS idx_wvm_visits_pin ON whatsapp_visitor_management_visits(pin);
+CREATE INDEX IF NOT EXISTS idx_wvm_visits_visitor_phone ON whatsapp_visitor_management_visits(visitor_phone);
 CREATE INDEX IF NOT EXISTS idx_wvm_hosts_account ON whatsapp_visitor_management_hosts(account_id);
+CREATE INDEX IF NOT EXISTS idx_wvm_hosts_phone ON whatsapp_visitor_management_hosts(phone);
 CREATE INDEX IF NOT EXISTS idx_wvm_audit_created ON whatsapp_visitor_management_audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wvm_conversation_phone ON whatsapp_visitor_management_conversation_states(phone_number);
 
 INSERT INTO whatsapp_visitor_management_settings (id)
 VALUES (1)

@@ -8,11 +8,15 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const { pool } = await import('../src/config/db.js');
 
-const sql = fs.readFileSync(path.join(__dirname, 'init.sql'), 'utf8');
+const files = ['init.sql', '002_whatsapp.sql'];
 
 try {
-  await pool.query(sql);
-  console.log('Prefixed VMS tables are ready (existing tables were not modified).');
+  for (const file of files) {
+    const sql = fs.readFileSync(path.join(__dirname, file), 'utf8');
+    await pool.query(sql);
+    console.log(`Applied ${file}`);
+  }
+  console.log('Prefixed VMS tables are ready (existing tables were not dropped).');
 } catch (err) {
   console.error('Migration failed:', err.message);
   process.exitCode = 1;
