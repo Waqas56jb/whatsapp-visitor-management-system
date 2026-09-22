@@ -26,6 +26,7 @@ export async function notifyHostNewVisit(visit) {
     return;
   }
 
+  const accountId = host?.account_id || null;
   await sendText(
     phone,
     [
@@ -38,7 +39,8 @@ export async function notifyHostNewVisit(visit) {
       `Reference: ${visit.ref_number}`,
       '',
       `Reply APPROVE ${visit.ref_number} or REJECT ${visit.ref_number}`,
-    ].join('\n')
+    ].join('\n'),
+    { accountId }
   );
 }
 
@@ -52,8 +54,13 @@ export async function notifyVisitorSubmitted(visit) {
       `Reference: ${visit.ref_number}`,
       'Status: Pending host approval.',
       "You'll be notified here once your host responds.",
-    ].join('\n')
+    ].join('\n'),
+    { accountId: visit.host_account_id || null }
   );
+}
+
+function sendOpts(visit) {
+  return { accountId: visit.host_account_id || null };
 }
 
 export async function notifyVisitorApproved(visit) {
@@ -67,19 +74,20 @@ export async function notifyVisitorApproved(visit) {
     `Date: ${formatDateNice(visit.visit_date) || formatDate(visit.visit_date)}`,
     `Time: ${visit.visit_time}`,
     `Location: ${location}`,
+    'Scan this QR to view your pass.',
   ].join('\n');
 
   if (!visit.qr_token) {
-    await sendText(phone, caption);
+    await sendText(phone, caption, sendOpts(visit));
     return;
   }
   try {
     const png = await generateQrBuffer(visit.qr_token);
-    const sent = await sendImage(phone, png, caption);
-    if (!sent) await sendText(phone, caption);
+    const sent = await sendImage(phone, png, caption, sendOpts(visit));
+    if (!sent) await sendText(phone, caption, sendOpts(visit));
   } catch (err) {
     console.error('QR delivery failed, sending text only:', err.message);
-    await sendText(phone, caption);
+    await sendText(phone, caption, sendOpts(visit));
   }
 }
 
@@ -87,20 +95,18 @@ export async function notifyVisitorRejected(visit) {
   const phone = visit.visitor_phone || visit.visitor_profile_phone;
   if (!phone) return;
   const date = formatDateNice(visit.visit_date) || formatDate(visit.visit_date) || 'your requested date';
-  await sendText(phone, `We're sorry, your visit request for ${date} has been declined by the host.`);
+  await sendText(
+    phone,
+    `We're sorry, your visit request for ${date} has been declined by the host.`,
+    sendOpts(visit)
+  );
 }
 
 export async function notifyHostDecisionResult(hostPhone, visit, decision) {
   if (!hostPhone) return;
-  if (decision === 'approved') {
-    await sendText(
-      hostPhone,
-      `✅ Approved. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
-    );
-  } else {
-    await sendText(
-      hostPhone,
-      `Request rejected. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
-    );
-  }
+  const text =
+    decision === 'approved'
+      ? `✅ Approved. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
+      : `Request rejected. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`;
+  await sendText(hostPhone, text, sendOpts(visit));
 }

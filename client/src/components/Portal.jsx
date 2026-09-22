@@ -3,6 +3,8 @@ import {
   Activity,
   ArrowLeft,
   Bell,
+  BookOpen,
+  Bot,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -20,7 +22,10 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import Agent from './Agent';
 import Conversations from './Conversations';
+import KnowledgeBase from './KnowledgeBase';
+import WhatsAppLink from './WhatsAppLink';
 import { initials } from '../lib/db';
 import api, { setClientToken } from '../api/client';
 
@@ -28,6 +33,9 @@ const titles = {
   overview: ['Overview', 'Welcome back'],
   requests: ['Visit requests', 'Approve or reject bookings sent to you'],
   conversations: ['Conversations', 'WhatsApp threads for your visitors'],
+  agent: ['AI Agent', 'Dashboard assistant — approve or review visits'],
+  whatsapp: ['WhatsApp', 'Scan to link your number for visitor bookings'],
+  knowledge: ['Knowledge base', 'Train greeting and Q&A for the visitor agent'],
   passes: ['My passes', 'Active QR passes for your approved visitors'],
   history: ['History', 'Everyone who has visited you'],
   notifications: ['Notifications', 'Recent updates'],
@@ -167,6 +175,24 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                 <MessagesSquare size={18} strokeWidth={1.85} />
               </span>
               Conversations
+            </button>
+            <button className={'ap-link' + (view === 'agent' ? ' active' : '')} onClick={() => switchView('agent')}>
+              <span className="ic">
+                <Bot size={18} strokeWidth={1.85} />
+              </span>
+              AI Agent
+            </button>
+            <button className={'ap-link' + (view === 'whatsapp' ? ' active' : '')} onClick={() => switchView('whatsapp')}>
+              <span className="ic">
+                <QrCode size={18} strokeWidth={1.85} />
+              </span>
+              WhatsApp
+            </button>
+            <button className={'ap-link' + (view === 'knowledge' ? ' active' : '')} onClick={() => switchView('knowledge')}>
+              <span className="ic">
+                <BookOpen size={18} strokeWidth={1.85} />
+              </span>
+              Knowledge base
             </button>
             <button className={'ap-link' + (view === 'passes' ? ' active' : '')} onClick={() => switchView('passes')}>
               <span className="ic">
@@ -384,6 +410,18 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
 
             <section className={'ap-view' + (view === 'conversations' ? ' active' : '')} id="view-conversations">
               {view === 'conversations' ? <Conversations /> : null}
+            </section>
+
+            <section className={'ap-view' + (view === 'agent' ? ' active' : '')} id="view-agent">
+              {view === 'agent' ? <Agent onAfterAction={fetchHostData} /> : null}
+            </section>
+
+            <section className={'ap-view' + (view === 'whatsapp' ? ' active' : '')} id="view-whatsapp">
+              {view === 'whatsapp' ? <WhatsAppLink onToast={onToast} /> : null}
+            </section>
+
+            <section className={'ap-view' + (view === 'knowledge' ? ' active' : '')} id="view-knowledge">
+              {view === 'knowledge' ? <KnowledgeBase onToast={onToast} /> : null}
             </section>
 
             <section className={'ap-view' + (view === 'history' ? ' active' : '')} id="view-history">

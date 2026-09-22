@@ -122,7 +122,7 @@ export const Visitor = {
 
 const VISIT_SELECT = `
   SELECT vs.*, vis.name AS visitor_name, vis.company AS visitor_company, vis.phone AS visitor_profile_phone,
-         h.name AS host_name, h.department AS host_department, h.phone AS host_phone
+         h.name AS host_name, h.department AS host_department, h.phone AS host_phone, h.account_id AS host_account_id
   FROM ${T.visits} vs
   JOIN ${T.visitors} vis ON vis.id = vs.visitor_id
   JOIN ${T.hosts} h ON h.id = vs.host_id
@@ -190,28 +190,86 @@ export const Visit = {
 };
 
 export const ConversationState = {
-  findByPhone: (phone) =>
-    queryOne(`SELECT * FROM ${T.conversations} WHERE phone_number = $1`, [normalizePhone(phone)]),
-  upsert: (phone, current_step, collected_data = {}) =>
+  findByPhone: (phone, accountId = 0) =>
     queryOne(
-      `INSERT INTO ${T.conversations} (phone_number, current_step, collected_data, updated_at)
-       VALUES ($1,$2,$3::jsonb, NOW())
-       ON CONFLICT (phone_number) DO UPDATE
+      `SELECT * FROM ${T.conversations} WHERE phone_number = $1 AND account_id = $2`,
+      [normalizePhone(phone), Number(accountId) || 0]
+    ),
+  upsert: (phone, current_step, collected_data = {}, accountId = 0) =>
+    queryOne(
+      `INSERT INTO ${T.conversations} (phone_number, current_step, collected_data, account_id, updated_at)
+       VALUES ($1,$2,$3::jsonb,$4, NOW())
+       ON CONFLICT (phone_number, account_id) DO UPDATE
          SET current_step = EXCLUDED.current_step,
              collected_data = EXCLUDED.collected_data,
              updated_at = NOW()
        RETURNING *`,
-      [normalizePhone(phone), current_step, JSON.stringify(collected_data || {})]
+      [normalizePhone(phone), current_step, JSON.stringify(collected_data || {}), Number(accountId) || 0]
     ),
-  clear: (phone) => query(`DELETE FROM ${T.conversations} WHERE phone_number = $1`, [normalizePhone(phone)]),
+  clear: (phone, accountId = 0) =>
+    query(`DELETE FROM ${T.conversations} WHERE phone_number = $1 AND account_id = $2`, [
+      normalizePhone(phone),
+      Number(accountId) || 0,
+    ]),
+};
+
+export const Knowledge = {
+  list: (accountId) =>
+    query(`SELECT * FROM ${T.knowledge} WHERE account_id = $1 ORDER BY kind ASC, id ASC`, [accountId]),
+  findById: (id, accountId) =>
+    queryOne(`SELECT * FROM ${T.knowledge} WHERE id = $1 AND account_id = $2`, [id, accountId]),
+  create: ({ account_id, kind, title = '', question = '', answer = '' }) =>
+    queryOne(
+      `INSERT INTO ${T.knowledge} (account_id, kind, title, question, answer)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [account_id, kind || 'qa', title, question, answer]
+    ),
+  update: (id, accountId, fields) => {
+    const allowed = ['kind', 'title', 'question', 'answer'];
+    const sets = [];
+    const vals = [];
+    for (const key of allowed) {
+      if (fields[key] !== undefined) {
+        vals.push(fields[key]);
+        sets.push(`${key} = $${vals.length}`);
+      }
+    }
+    if (!sets.length) return Knowledge.findById(id, accountId);
+    vals.push(id, accountId);
+    return queryOne(
+      `UPDATE ${T.knowledge} SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND account_id = $${vals.length} RETURNING *`,
+      vals
+    );
+  },
+  remove: (id, accountId) =>
+    queryOne(`DELETE FROM ${T.knowledge} WHERE id = $1 AND account_id = $2 RETURNING *`, [id, accountId]),
+};
+
+export const WhatsAppLink = {
+  findByAccountId: (accountId) =>
+    queryOne(`SELECT * FROM ${T.whatsappLinks} WHERE account_id = $1`, [accountId]),
+  listLinked: () => query(`SELECT * FROM ${T.whatsappLinks} WHERE status IN ('connected', 'connecting')`),
+  upsert: ({ account_id, host_id = null, phone = null, wa_name = null, status = 'disconnected' }) =>
+    queryOne(
+      `INSERT INTO ${T.whatsappLinks} (account_id, host_id, phone, wa_name, status, updated_at)
+       VALUES ($1,$2,$3,$4,$5, NOW())
+       ON CONFLICT (account_id) DO UPDATE
+         SET host_id = COALESCE(EXCLUDED.host_id, ${T.whatsappLinks}.host_id),
+             phone = COALESCE(EXCLUDED.phone, ${T.whatsappLinks}.phone),
+             wa_name = COALESCE(EXCLUDED.wa_name, ${T.whatsappLinks}.wa_name),
+             status = EXCLUDED.status,
+             updated_at = NOW()
+       RETURNING *`,
+      [account_id, host_id, phone, wa_name, status]
+    ),
 };
 
 export const ConversationLog = {
-  add: ({ phone_number, visit_id = null, direction, message_text }) =>
+  add: ({ phone_number, visit_id = null, direction, message_text, account_id = null }) =>
     queryOne(
-      `INSERT INTO ${T.conversationLog} (phone_number, visit_id, direction, message_text)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [normalizePhone(phone_number), visit_id || null, direction, String(message_text || '')]
+      `INSERT INTO ${T.conversationLog} (phone_number, visit_id, direction, message_text, account_id)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [normalizePhone(phone_number), visit_id || null, direction, String(message_text || ''), account_id || null]
     ),
   linkVisit: (phone, visitId, windowHours = 24) =>
     query(

@@ -10,4 +10,6 @@ export const T = {
   settings: `${prefix}settings`,
   conversations: `${prefix}conversation_states`,
   conversationLog: `${prefix}conversation_log`,
+  knowledge: `${prefix}knowledge_base`,
+  whatsappLinks: `${prefix}whatsapp_links`,
 };

@@ -11,6 +11,9 @@ const port = Number(process.env.PORT || 5000);
 app.listen(port, () => {
   console.log(`WhatsApp VMS API running on http://localhost:${port}`);
   import('./src/whatsapp/connection.js')
-    .then(({ startWhatsApp }) => startWhatsApp({ listenMessages: true }))
+    .then(async ({ startWhatsApp, restoreClientSessions }) => {
+      await startWhatsApp({ listenMessages: true });
+      await restoreClientSessions();
+    })
     .catch((err) => console.error('WhatsApp failed to start:', err.message));
 });

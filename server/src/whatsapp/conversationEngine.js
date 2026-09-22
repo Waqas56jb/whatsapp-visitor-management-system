@@ -14,14 +14,18 @@ function dataOf(state) {
   return raw && typeof raw === 'object' ? { ...raw } : {};
 }
 
-async function ask(phone, step, data, prompt) {
-  await ConversationState.upsert(phone, step, { ...data, prompt });
-  await sendText(phone, prompt);
+function opts(accountId) {
+  return { accountId: accountId || null };
 }
 
-async function sorry(phone, data, extra) {
+async function ask(phone, step, data, prompt, accountId = 0) {
+  await ConversationState.upsert(phone, step, { ...data, prompt }, accountId);
+  await sendText(phone, prompt, opts(accountId));
+}
+
+async function sorry(phone, data, extra, accountId = 0) {
   const prompt = extra || data.prompt || 'Please reply with a number.';
-  await sendText(phone, `Sorry, I didn't understand that.\n${prompt}`);
+  await sendText(phone, `Sorry, I didn't understand that.\n${prompt}`, opts(accountId));
 }
 
 export async function menuPrompt() {
@@ -35,9 +39,9 @@ export async function menuPrompt() {
   ].join('\n');
 }
 
-export async function showMenu(phone) {
+export async function showMenu(phone, accountId = 0) {
   const prompt = await menuPrompt();
-  await ask(phone, 'menu', {}, prompt);
+  await ask(phone, 'menu', {}, prompt, accountId);
 }
 
 const TYPE_PROMPT = [
@@ -58,30 +62,41 @@ async function hostPrompt() {
   return { prompt: lines.join('\n'), hosts };
 }
 
-export async function handleIncomingMessage({ from, text }) {
+export async function handleIncomingMessage({ from, text, accountId = 0, hostId = null }) {
+  const acct = Number(accountId) || 0;
   const body = String(text || '').trim();
-  const state = await ConversationState.findByPhone(from);
+  const state = await ConversationState.findByPhone(from, acct);
   const data = dataOf(state);
   const step = state?.current_step;
 
   const lower = body.toLowerCase();
   if (lower === 'menu' || lower === 'cancel') {
-    await showMenu(from);
+    await showMenu(from, acct);
     return;
   }
 
   if (!state || !step) {
-    await showMenu(from);
+    await showMenu(from, acct);
     return;
+  }
+
+  async function goPurpose(next) {
+    if (hostId) {
+      const host = await Host.findById(hostId);
+      await ask(from, 'purpose', { ...next, hostId, hostName: host?.name }, 'What is the purpose of your visit?', acct);
+      return;
+    }
+    const { prompt, hosts } = await hostPrompt();
+    await ask(from, 'host', { ...next, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, prompt, acct);
   }
 
   if (step === 'menu') {
     if (body === '1' || lower === 'request a visit' || lower === 'request visit') {
-      await ask(from, 'visit_type', {}, TYPE_PROMPT);
+      await ask(from, 'visit_type', {}, TYPE_PROMPT, acct);
       return;
     }
     if (body === '2' || lower.includes('status')) {
-      await ask(from, 'status_ref', {}, 'Please send your reference number (e.g. VMS-2026-001245).');
+      await ask(from, 'status_ref', {}, 'Please send your reference number (e.g. VMS-2026-001245).', acct);
       return;
     }
     if (body === '3' || lower === 'help') {
@@ -94,12 +109,13 @@ export async function handleIncomingMessage({ from, text }) {
           '2 — Check visit status (you will need your reference number)',
           '',
           'Reply menu at any time to start over.',
-        ].join('\n')
+        ].join('\n'),
+        opts(acct)
       );
-      await showMenu(from);
+      await showMenu(from, acct);
       return;
     }
-    await sorry(from, data);
+    await sorry(from, data, null, acct);
     return;
   }
 
@@ -108,36 +124,34 @@ export async function handleIncomingMessage({ from, text }) {
     if (body === '1' || lower.includes('social')) visitType = 'social';
     if (body === '2' || lower.includes('official')) visitType = 'official';
     if (!visitType) {
-      await sorry(from, data, TYPE_PROMPT);
+      await sorry(from, data, TYPE_PROMPT, acct);
       return;
     }
     const next = { visitType, company: visitType === 'social' ? '—' : undefined };
-    await ask(from, 'name', next, 'Please reply with your full name.');
+    await ask(from, 'name', next, 'Please reply with your full name.', acct);
     return;
   }
 
   if (step === 'name') {
     if (body.length < 2 || /^\d+$/.test(body)) {
-      await sorry(from, data, 'Please reply with your full name.');
+      await sorry(from, data, 'Please reply with your full name.', acct);
       return;
     }
     const next = { ...data, name: body };
     if (data.visitType === 'social') {
-      const { prompt, hosts } = await hostPrompt();
-      await ask(from, 'host', { ...next, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, prompt);
+      await goPurpose(next);
     } else {
-      await ask(from, 'company', next, 'Please reply with your company name.');
+      await ask(from, 'company', next, 'Please reply with your company name.', acct);
     }
     return;
   }
 
   if (step === 'company') {
     if (body.length < 2) {
-      await sorry(from, data, 'Please reply with your company name.');
+      await sorry(from, data, 'Please reply with your company name.', acct);
       return;
     }
-    const { prompt, hosts } = await hostPrompt();
-    await ask(from, 'host', { ...data, company: body, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, prompt);
+    await goPurpose({ ...data, company: body });
     return;
   }
 
@@ -150,47 +164,47 @@ export async function handleIncomingMessage({ from, text }) {
     if (!host) host = (await Host.findByName(body)) || (await Host.searchByName(body));
     if (!host) {
       const { prompt, hosts } = await hostPrompt();
-      await ask(from, 'host', { ...data, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, `Sorry, I didn't understand that.\n${prompt}`);
+      await ask(from, 'host', { ...data, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, `Sorry, I didn't understand that.\n${prompt}`, acct);
       return;
     }
-    await ask(from, 'purpose', { ...data, hostId: host.id, hostName: host.name }, 'What is the purpose of your visit?');
+    await ask(from, 'purpose', { ...data, hostId: host.id, hostName: host.name }, 'What is the purpose of your visit?', acct);
     return;
   }
 
   if (step === 'purpose') {
     if (body.length < 2) {
-      await sorry(from, data, 'What is the purpose of your visit?');
+      await sorry(from, data, 'What is the purpose of your visit?', acct);
       return;
     }
-    await ask(from, 'date', { ...data, purpose: body }, 'Preferred date? You can send 2026-09-22, 22 Sep, or 22/09/2026.');
+    await ask(from, 'date', { ...data, purpose: body }, 'Preferred date? You can send 2026-09-22, 22 Sep, or 22/09/2026.', acct);
     return;
   }
 
   if (step === 'date') {
     const date = parseFlexibleDate(body);
     if (date === 'past') {
-      await sorry(from, data, 'That date is in the past. Please send a future date.');
+      await sorry(from, data, 'That date is in the past. Please send a future date.', acct);
       return;
     }
     if (!date) {
-      await sorry(from, data, 'Preferred date? You can send 2026-09-22, 22 Sep, or 22/09/2026.');
+      await sorry(from, data, 'Preferred date? You can send 2026-09-22, 22 Sep, or 22/09/2026.', acct);
       return;
     }
-    await ask(from, 'time', { ...data, date }, 'Preferred time? You can send 10am, 10:00, or 10:00 AM.');
+    await ask(from, 'time', { ...data, date }, 'Preferred time? You can send 10am, 10:00, or 10:00 AM.', acct);
     return;
   }
 
   if (step === 'time') {
     const time = parseFlexibleTime(body);
     if (!time) {
-      await sorry(from, data, 'Preferred time? You can send 10am, 10:00, or 10:00 AM.');
+      await sorry(from, data, 'Preferred time? You can send 10am, 10:00, or 10:00 AM.', acct);
       return;
     }
     try {
       await createPendingVisit({
         name: data.name,
         company: data.company || '—',
-        hostId: data.hostId,
+        hostId: data.hostId || hostId,
         purpose: data.purpose,
         date: data.date,
         time,
@@ -199,11 +213,11 @@ export async function handleIncomingMessage({ from, text }) {
         actor: data.name || 'Visitor',
         notify: true,
       });
-      await ConversationState.clear(from);
+      await ConversationState.clear(from, acct);
     } catch (err) {
       console.error('WhatsApp visit create failed:', err.message);
-      await sendText(from, 'Could not create your visit request. Please reply menu and try again.');
-      await showMenu(from);
+      await sendText(from, 'Could not create your visit request. Please reply menu and try again.', opts(acct));
+      await showMenu(from, acct);
     }
     return;
   }
@@ -211,7 +225,7 @@ export async function handleIncomingMessage({ from, text }) {
   if (step === 'status_ref') {
     const visit = await Visit.findByRef(body);
     if (!visit) {
-      await sorry(from, data, 'I could not find that reference. Please send it like VMS-2026-001245.');
+      await sorry(from, data, 'I could not find that reference. Please send it like VMS-2026-001245.', acct);
       return;
     }
     await sendText(
@@ -222,11 +236,12 @@ export async function handleIncomingMessage({ from, text }) {
         `Host: ${visit.host_name}`,
         `Date: ${formatDateNice(visit.visit_date)} at ${visit.visit_time}`,
         `Status: ${visit.status}`,
-      ].join('\n')
+      ].join('\n'),
+      opts(acct)
     );
-    await showMenu(from);
+    await showMenu(from, acct);
     return;
   }
 
-  await showMenu(from);
+  await showMenu(from, acct);
 }

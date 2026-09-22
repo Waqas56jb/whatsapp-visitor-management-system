@@ -141,6 +141,10 @@ Header for protected routes: `Authorization: Bearer <token>`
 - `PATCH /api/host/visits/:id/approve` `PATCH /api/host/visits/:id/reject`
 - `GET /api/host/passes` `GET /api/host/history` `GET /api/host/notifications` `GET /api/host/profile`
 - `GET /api/host/conversations`
+- `POST /api/host/agent` `{ message, history }` — OpenAI host assistant (needs `OPENAI_API_KEY`)
+- `GET/POST /api/host/whatsapp/status|connect|disconnect`
+- `GET/POST /api/host/knowledge` `PATCH/DELETE /api/host/knowledge/:id`
+- `GET /api/passes/info/:token` — visitor pass details (no check-in)
 
 ### Public / WhatsApp
 - `GET /api/health`

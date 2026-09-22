@@ -528,12 +528,12 @@ export default function App() {
                 <button className="menu-toggle" onClick={() => setSidebarOpen((o) => !o)} aria-label="Open menu">
                   <Menu size={20} strokeWidth={2} />
                 </button>
-                <div>
+        <div>
                   <h2 id="viewTitle">{titles[view][0]}</h2>
                   <p className="sub" id="viewSub">
                     {titles[view][1]}
-                  </p>
-                </div>
+          </p>
+        </div>
               </div>
               <div className="top-actions">
                 <div className="search-box">
@@ -1132,7 +1132,7 @@ export default function App() {
                     </button>
                     <button className="btn btn-ghost" onClick={() => exportCSV('audit')}>
                       <Download size={15} /> Export audit log (CSV)
-                    </button>
+        </button>
                   </div>
                 </div>
                 <div className="panel">
@@ -1173,7 +1173,7 @@ export default function App() {
                     )}
                   </div>
                 </div>
-              </section>
+      </section>
 
               <section className={'view' + (view === 'audit' ? ' active' : '')} id="view-audit">
                 <div className="panel">

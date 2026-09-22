@@ -1,8 +1,8 @@
 import { ConversationLog } from '../models/index.js';
 import { phoneFromJid, toJid } from '../utils/phone.js';
-import { getSock } from './connection.js';
+import { getSock, getSockForAccount } from './connection.js';
 
-async function logOutgoing(jid, text) {
+async function logOutgoing(jid, text, accountId = null) {
   const phone = phoneFromJid(toJid(jid));
   if (!phone) return;
   try {
@@ -10,14 +10,15 @@ async function logOutgoing(jid, text) {
       phone_number: phone,
       direction: 'outgoing',
       message_text: text || '',
+      account_id: accountId || null,
     });
   } catch (err) {
     console.error('Conversation outgoing log failed:', err.message);
   }
 }
 
-function readySock() {
-  const sock = getSock();
+function readySock(accountId) {
+  const sock = accountId ? getSockForAccount(accountId) : getSock();
   if (!sock) {
     console.warn('WhatsApp send skipped — socket is not connected');
     return null;
@@ -25,14 +26,15 @@ function readySock() {
   return sock;
 }
 
-export async function sendText(jid, text) {
+export async function sendText(jid, text, options = {}) {
   try {
-    const sock = readySock();
+    const accountId = options.accountId || null;
+    const sock = options.sock || readySock(accountId);
     if (!sock) return false;
     const to = toJid(jid);
     if (!to) return false;
     await sock.sendMessage(to, { text: String(text) });
-    await logOutgoing(to, String(text));
+    await logOutgoing(to, String(text), accountId);
     return true;
   } catch (err) {
     console.error('sendText failed:', err.message);
@@ -40,9 +42,10 @@ export async function sendText(jid, text) {
   }
 }
 
-export async function sendImage(jid, imagePathOrBuffer, caption) {
+export async function sendImage(jid, imagePathOrBuffer, caption, options = {}) {
   try {
-    const sock = readySock();
+    const accountId = options.accountId || null;
+    const sock = options.sock || readySock(accountId);
     if (!sock) return false;
     const to = toJid(jid);
     if (!to) return false;
@@ -50,7 +53,7 @@ export async function sendImage(jid, imagePathOrBuffer, caption) {
       ? imagePathOrBuffer
       : { url: imagePathOrBuffer };
     await sock.sendMessage(to, { image, caption: caption || undefined });
-    await logOutgoing(to, caption || '[image]');
+    await logOutgoing(to, caption || '[image]', accountId);
     return true;
   } catch (err) {
     console.error('sendImage failed:', err.message);

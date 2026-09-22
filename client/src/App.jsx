@@ -2,13 +2,20 @@ import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import Landing from './components/Landing';
 import LoginScreen from './components/LoginScreen';
+import PassView from './components/PassView';
 import Portal from './components/Portal';
 import { getClientToken } from './api/client';
+
+function passTokenFromPath() {
+  const match = window.location.pathname.match(/^\/pass\/([A-Za-z0-9]+)/);
+  return match ? match[1] : '';
+}
 
 export default function App() {
   const [loginOn, setLoginOn] = useState(false);
   const [appOn, setAppOn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  const [passToken] = useState(() => passTokenFromPath());
 
   useEffect(() => {
     const savedUser = sessionStorage.getItem('botho_client_user');
@@ -34,6 +41,15 @@ export default function App() {
   function backToSite() {
     setAppOn(false);
     window.scrollTo(0, 0);
+  }
+
+  if (passToken) {
+    return (
+      <>
+        <div id="glow"></div>
+        <PassView token={passToken} />
+      </>
+    );
   }
 
   return (
