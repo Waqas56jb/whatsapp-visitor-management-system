@@ -4,18 +4,22 @@ import Landing from './components/Landing';
 import LoginScreen from './components/LoginScreen';
 import PassView from './components/PassView';
 import Portal from './components/Portal';
+import Validator from './components/Validator';
 import { getClientToken } from './api/client';
 
-function passTokenFromPath() {
-  const match = window.location.pathname.match(/^\/pass\/([A-Za-z0-9]+)/);
-  return match ? match[1] : '';
+function routeFromPath() {
+  const path = window.location.pathname.replace(/\/$/, '') || '/';
+  if (path === '/validate' || path === '/gate') return { type: 'validate' };
+  const match = path.match(/^\/pass\/([A-Za-z0-9]+)/);
+  if (match) return { type: 'pass', token: match[1] };
+  return { type: 'app' };
 }
 
 export default function App() {
   const [loginOn, setLoginOn] = useState(false);
   const [appOn, setAppOn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [passToken] = useState(() => passTokenFromPath());
+  const [route] = useState(() => routeFromPath());
 
   useEffect(() => {
     const savedUser = sessionStorage.getItem('botho_client_user');
@@ -43,11 +47,20 @@ export default function App() {
     window.scrollTo(0, 0);
   }
 
-  if (passToken) {
+  if (route.type === 'validate') {
     return (
       <>
         <div id="glow"></div>
-        <PassView token={passToken} />
+        <Validator />
+      </>
+    );
+  }
+
+  if (route.type === 'pass') {
+    return (
+      <>
+        <div id="glow"></div>
+        <PassView token={route.token} />
       </>
     );
   }

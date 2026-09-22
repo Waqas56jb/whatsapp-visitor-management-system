@@ -55,6 +55,12 @@ export default function PassView({ token }) {
                 <dt>Reference</dt>
                 <dd>{data.ref}</dd>
               </div>
+              {data.pin ? (
+                <div>
+                  <dt>Backup PIN</dt>
+                  <dd>{data.pin}</dd>
+                </div>
+              ) : null}
             </dl>
             <div className="pass-foot">
               <QrCode size={16} /> Show this page at the gate

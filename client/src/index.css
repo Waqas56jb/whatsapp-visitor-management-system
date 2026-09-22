@@ -416,7 +416,19 @@
   .pass-card dt{font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted);}
   .pass-card dd{margin:0; font-weight:600;}
   .pass-foot{margin-top:18px; display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px;}
-  .pass-error{color:var(--bad);}
+  .pass-error{color:var(--bad); display:flex; align-items:center; gap:6px;}
+  .validator-card h1{font-size:24px;}
+  .validator-field{display:block; margin:12px 0;}
+  .validator-field span{display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px;}
+  .validator-field input{width:100%; padding:12px 13px; border-radius:12px; border:1px solid var(--line); background:var(--paper); font-size:16px; letter-spacing:.04em;}
+  .validator-actions{display:flex; flex-wrap:wrap; gap:10px; margin-top:8px;}
+  .validator-result{margin-top:20px; padding:16px; border-radius:16px; background:var(--paper); border:1px solid var(--line);}
+  .validator-result.ok{background:var(--ok-bg); border-color:#b7ecd8;}
+  .validator-result h2{font-size:22px; margin:6px 0 2px;}
+  .validator-result p{color:var(--muted); margin-bottom:12px;}
+  .validator-result dl{display:grid; gap:8px;}
+  .validator-result dt{font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted);}
+  .validator-result dd{margin:0; font-weight:600;}
   @media(max-width:800px){ .chat-split{grid-template-columns:1fr;} .chat-list{max-height:220px; border-right:none; border-bottom:1px solid var(--line);} }
   .ap-profile-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:22px 24px;}
   .ap-f-field label{display:block; font-size:12.5px; font-weight:600; color:var(--muted); margin-bottom:7px;}

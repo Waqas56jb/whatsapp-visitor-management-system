@@ -5,6 +5,10 @@ export function generateQrToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+export function generatePin() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
 export function generateRef() {
   return 'VMS-2026-' + Math.floor(100000 + Math.random() * 900000);
 }

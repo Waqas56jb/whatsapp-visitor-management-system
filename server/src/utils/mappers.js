@@ -50,6 +50,7 @@ export function mapVisit(row) {
     date: formatDate(row.visit_date),
     time: row.visit_time,
     status: row.status,
+    pin: row.pin || null,
     qrToken: row.qr_token,
     visitType: row.visit_type || 'official',
     visitorPhone: row.visitor_phone || row.visitor_profile_phone || null,

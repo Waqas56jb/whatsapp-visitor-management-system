@@ -61,10 +61,20 @@ async function seed() {
     const existing = await queryOne(`SELECT * FROM ${T.visits} WHERE ref_number = $1`, [ref]);
     if (existing) return existing;
     return queryOne(
-      `INSERT INTO ${T.visits} (ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, qr_token, decided_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $7 = 'pending' THEN NULL ELSE NOW() END)
+      `INSERT INTO ${T.visits} (ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, qr_token, pin, decided_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, CASE WHEN $7 = 'pending' THEN NULL ELSE NOW() END)
        RETURNING *`,
-      [ref, visitorId, hostId, purpose, date, time, status, status === 'approved' ? 'seed-token-' + ref : null]
+      [
+        ref,
+        visitorId,
+        hostId,
+        purpose,
+        date,
+        time,
+        status,
+        status === 'approved' ? 'seed-token-' + ref : null,
+        status === 'approved' ? String(100000 + Math.floor(Math.random() * 900000)) : null,
+      ]
     );
   }
 

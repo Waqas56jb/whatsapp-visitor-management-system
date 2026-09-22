@@ -71,6 +71,7 @@ router.post('/auth/admin/login', adminLogin);
 router.post('/auth/client/login', clientLogin);
 router.post('/visits/public', rateLimit({ max: 30 }), createPublicVisit);
 router.post('/passes/validate', rateLimit({ max: 20 }), validatePassEndpoint);
+router.get('/passes/info', rateLimit({ max: 40 }), lookupPassEndpoint);
 router.get('/passes/info/:token', rateLimit({ max: 40 }), lookupPassEndpoint);
 
 router.get('/dashboard/stats', requireAuth('admin'), getDashboardStats);

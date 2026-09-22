@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_visitor_management_visits (
   status TEXT NOT NULL DEFAULT 'pending',
   visit_type TEXT NOT NULL DEFAULT 'official',
   visitor_phone TEXT,
+  pin TEXT,
   qr_token TEXT,
   used_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

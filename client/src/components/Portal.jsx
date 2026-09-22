@@ -400,8 +400,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                           <b style={{ fontSize: 15, letterSpacing: 0, color: '#fff' }}>{v.visitor}</b>
                         </div>
                         <div className="ap-pass-pin" style={{ marginTop: 12 }}>
-                          <span>QR reference</span>
-                          <b style={{ fontSize: 15, letterSpacing: 0 }}>{v.ref}</b>
+                          <span>Backup PIN</span>
+                          <b>{v.pin || '—'}</b>
                         </div>
                       </div>
                     ))

@@ -257,6 +257,10 @@ export default function App() {
           </span>
         </div>
         <div className="detail-row">
+          <span className="k">PIN</span>
+          <span className="v">{v.pin || '—'}</span>
+        </div>
+        <div className="detail-row">
           <span className="k">QR token</span>
           <span className="v">{tokenRef(v.qrToken)}</span>
         </div>
@@ -875,6 +879,7 @@ export default function App() {
                         <tr>
                           <th>Reference</th>
                           <th>Visitor</th>
+                          <th>PIN</th>
                           <th>QR token</th>
                           <th>Issued</th>
                           <th>Status</th>
@@ -887,6 +892,7 @@ export default function App() {
                             <tr key={v.id}>
                               <td className="cell-main">{v.ref}</td>
                               <td>{v.visitor}</td>
+                              <td>{v.pin || '—'}</td>
                               <td>{tokenRef(v.qrToken)}</td>
                               <td>{v.date}</td>
                               <td>
@@ -901,7 +907,7 @@ export default function App() {
                           ))
                         ) : (
                           <tr>
-                            <td colSpan="6" className="empty">
+                            <td colSpan="7" className="empty">
                               <EmptyState icon={QrCode}>No passes issued yet</EmptyState>
                             </td>
                           </tr>

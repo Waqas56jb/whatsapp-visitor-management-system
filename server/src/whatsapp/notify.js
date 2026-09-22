@@ -74,8 +74,11 @@ export async function notifyVisitorApproved(visit) {
     `Date: ${formatDateNice(visit.visit_date) || formatDate(visit.visit_date)}`,
     `Time: ${visit.visit_time}`,
     `Location: ${location}`,
-    'Scan this QR to view your pass.',
-  ].join('\n');
+    visit.pin ? `Backup PIN: ${visit.pin}` : null,
+    'Show this QR at reception, or enter the PIN if the camera cannot scan.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   if (!visit.qr_token) {
     await sendText(phone, caption, sendOpts(visit));

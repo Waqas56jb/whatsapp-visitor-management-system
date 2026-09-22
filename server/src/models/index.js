@@ -148,6 +148,8 @@ export const Visit = {
   findByRef: (ref) =>
     queryOne(`${VISIT_SELECT} WHERE LOWER(vs.ref_number) = LOWER($1)`, [String(ref || '').trim()]),
   findByToken: (token) => queryOne(`${VISIT_SELECT} WHERE vs.qr_token = $1`, [token]),
+  findByPin: (pin) =>
+    queryOne(`${VISIT_SELECT} WHERE vs.pin = $1 ORDER BY vs.created_at DESC LIMIT 1`, [String(pin || '').trim()]),
   listByVisitorPhone: (phone, limit = 5) =>
     query(
       `${VISIT_SELECT}
@@ -174,12 +176,15 @@ export const Visit = {
         row.visitor_phone || null,
       ]
     ),
-  decide: (id, status, qr_token) =>
+  decide: (id, status, qr_token, pin) =>
     queryOne(
       `UPDATE ${T.visits}
-       SET status = $2, qr_token = COALESCE($3, qr_token), decided_at = NOW()
+       SET status = $2,
+           qr_token = COALESCE($3, qr_token),
+           pin = COALESCE($4, pin),
+           decided_at = NOW()
        WHERE id = $1 RETURNING *`,
-      [id, status, qr_token]
+      [id, status, qr_token, pin]
     ),
   markUsed: (id) =>
     queryOne(

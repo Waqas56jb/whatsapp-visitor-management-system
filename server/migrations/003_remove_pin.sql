@@ -1,6 +1,3 @@
--- Remove backup PIN. Safe to re-run.
-
-DROP INDEX IF EXISTS idx_wvm_visits_pin;
-
-ALTER TABLE whatsapp_visitor_management_visits
-  DROP COLUMN IF EXISTS pin;
+-- PIN was temporarily removed, then restored in 007_restore_pin.sql.
+-- This file is now a no-op so re-running migrate does not wipe PIN values.
+SELECT 1;

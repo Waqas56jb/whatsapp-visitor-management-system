@@ -151,6 +151,7 @@ Header for protected routes: `Authorization: Bearer <token>`
 - `POST /api/visits/public` `{ name, host, company, purpose, date, time }` (rate-limited)
 - `GET /api/whatsapp/status` → `{ connected, qrAvailable, user }`
 - `GET /api/whatsapp/qr` → PNG of the linking QR (only while waiting to scan)
-- `POST /api/passes/validate` `{ token }` — security-gate check (rate-limited)
+- `POST /api/passes/validate` `{ token }` or `{ pin }` — reception check-in
+- `GET /api/passes/info/:token` or `GET /api/passes/info?pin=` — visitor/reception details (no check-in)
 
 Gate validation reasons: `not_found`, `not_approved`, `already_used`, `expired`, `missing`.

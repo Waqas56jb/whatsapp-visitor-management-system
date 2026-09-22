@@ -5,7 +5,7 @@ import {
   Visit,
   Visitor,
 } from '../models/index.js';
-import { generateQrToken, generateRef } from '../utils/generateToken.js';
+import { generatePin, generateQrToken, generateRef } from '../utils/generateToken.js';
 import { formatDate } from '../utils/mappers.js';
 import { normalizePhone } from '../utils/phone.js';
 import {
@@ -103,7 +103,16 @@ export async function decideVisit({ visitId, decision, actor = 'Host', actorHost
 
   const approved = decision === 'approved';
   const qr_token = approved ? generateQrToken() : visit.qr_token;
-  await Visit.decide(visit.id, approved ? 'approved' : 'rejected', qr_token);
+  let pin = visit.pin;
+  if (approved) {
+    pin = generatePin();
+    for (let i = 0; i < 6; i += 1) {
+      const taken = await Visit.findByPin(pin);
+      if (!taken || Number(taken.id) === Number(visit.id)) break;
+      pin = generatePin();
+    }
+  }
+  await Visit.decide(visit.id, approved ? 'approved' : 'rejected', qr_token, pin);
   await Audit.add({
     actor,
     action: approved ? 'Approved visit' : 'Rejected visit',
@@ -154,8 +163,12 @@ function todayStamp() {
   return `${y}-${m}-${day}`;
 }
 
-export async function validatePass({ token }) {
-  const visit = token ? await Visit.findByToken(String(token).trim()) : null;
+export async function validatePass({ token, pin }) {
+  const visit = token
+    ? await Visit.findByToken(String(token).trim())
+    : pin
+      ? await Visit.findByPin(String(pin).trim())
+      : null;
   if (!visit) {
     return { ok: false, reason: 'not_found', error: 'Pass not found' };
   }
@@ -195,6 +208,7 @@ export async function validatePass({ token }) {
       date: formatDate(full.visit_date),
       time: full.visit_time,
       purpose: full.purpose,
+      pin: full.pin,
       status: 'used',
     },
   };
