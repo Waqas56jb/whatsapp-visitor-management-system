@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { KNOWLEDGE_DEFAULTS } from '../config/knowledgeDefaults.js';
 import { ConversationState, Knowledge, Settings, Visit } from '../models/index.js';
 import { formatDateNice } from '../utils/mappers.js';
 import { createPendingVisit } from '../services/visits.js';
@@ -45,12 +46,14 @@ function sendOpts(ctx) {
 
 async function buildKnowledgePrompt(accountId) {
   const rows = accountId ? await Knowledge.list(accountId) : [];
-  const greeting = rows.find((r) => r.kind === 'greeting')?.answer || '';
-  const instruction = rows.filter((r) => r.kind === 'instruction').map((r) => r.answer).join('\n');
-  const qa = rows
-    .filter((r) => r.kind === 'qa' && (r.question || r.answer))
-    .map((r) => `Q: ${r.question || r.title}\nA: ${r.answer}`)
-    .join('\n\n');
+  const greeting = rows.find((r) => r.kind === 'greeting')?.answer || KNOWLEDGE_DEFAULTS.greeting;
+  const instruction =
+    rows.filter((r) => r.kind === 'instruction').map((r) => r.answer).join('\n') || KNOWLEDGE_DEFAULTS.instruction;
+  const savedQa = rows.filter((r) => r.kind === 'qa' && (r.question || r.answer));
+  const qaSource = savedQa.length
+    ? savedQa
+    : KNOWLEDGE_DEFAULTS.faqs.map((f) => ({ question: f.question, title: f.question, answer: f.answer }));
+  const qa = qaSource.map((r) => `Q: ${r.question || r.title}\nA: ${r.answer}`).join('\n\n');
   const settings = await Settings.get().catch(() => null);
   const org = settings?.org_name || 'Botho Innovations';
   return { greeting, instruction, qa, org };

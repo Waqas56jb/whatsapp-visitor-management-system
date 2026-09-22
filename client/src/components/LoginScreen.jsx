@@ -139,6 +139,25 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
             {error ? <p className="auth-error">{error}</p> : null}
+            <div className="auth-demo">
+              <b>Test login</b>
+              <p>
+                Username: <code>boikarabelo</code>
+                <br />
+                Password: <code>host2026</code>
+              </p>
+              <button
+                type="button"
+                className="auth-demo-fill"
+                onClick={() => {
+                  setUsername('boikarabelo');
+                  setPassword('host2026');
+                  setError('');
+                }}
+              >
+                Fill test credentials
+              </button>
+            </div>
             <p className="auth-foot">Need access? Ask your administrator to create a host account.</p>
           </form>
         </div>
