@@ -17,8 +17,6 @@ const origins = [
       process.env.CLIENT_ORIGIN,
       process.env.ADMIN_ORIGIN,
       ...extraOrigins,
-      'http://localhost:5173',
-      'http://localhost:5174',
       'https://marvelous-determination-production-9ce0.up.railway.app',
       'https://authentic-vision-production-7a37.up.railway.app',
     ].filter(Boolean)
