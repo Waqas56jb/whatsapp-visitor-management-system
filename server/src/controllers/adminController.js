@@ -10,8 +10,9 @@ import {
   reportSummary,
   visitsByDepartment,
 } from '../models/index.js';
-import { generatePin, generateQrImage, generateQrToken, generateRef } from '../utils/generateToken.js';
+import { generateQrImage } from '../utils/generateToken.js';
 import { mapAccount, mapAudit, mapHost, mapVisit, mapVisitor } from '../utils/mappers.js';
+import { createPendingVisit, decideVisit } from '../services/visits.js';
 
 function actorName(req) {
   return req.user?.name || req.user?.username || 'Admin';
@@ -47,64 +48,58 @@ export async function listVisits(req, res) {
 }
 
 export async function createVisit(req, res) {
-  const name = String(req.body.name || req.body.visitor || '').trim();
-  const company = String(req.body.company || '').trim() || '—';
-  const hostName = String(req.body.host || '').trim();
-  const purpose = String(req.body.purpose || '').trim() || '—';
-  const date = req.body.date || req.body.visit_date;
-  const time = req.body.time || req.body.visit_time || '—';
-  if (!name || !hostName || !date) {
-    return res.status(400).json({ error: 'Please fill in visitor name, host and date' });
+  try {
+    const name = String(req.body.name || req.body.visitor || '').trim();
+    const company = String(req.body.company || '').trim() || '—';
+    const hostName = String(req.body.host || '').trim();
+    const purpose = String(req.body.purpose || '').trim() || '—';
+    const date = req.body.date || req.body.visit_date;
+    const time = req.body.time || req.body.visit_time || '—';
+    const full = await createPendingVisit({
+      name,
+      company,
+      hostName,
+      hostId: req.body.host_id,
+      purpose,
+      date,
+      time,
+      visitType: req.body.visit_type || req.body.visitType || 'official',
+      visitorPhone: req.body.phone || req.body.visitor_phone,
+      actor: actorName(req),
+      notify: true,
+    });
+    res.status(201).json(mapVisit(full));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Could not create visit' });
   }
-  const host = await Host.findByName(hostName) || await Host.findById(req.body.host_id);
-  if (!host) return res.status(400).json({ error: 'Host not found' });
-  let visitor = await Visitor.findByName(name);
-  if (!visitor) visitor = await Visitor.create({ name, company });
-  const created = await Visit.create({
-    ref_number: generateRef(),
-    visitor_id: visitor.id,
-    host_id: host.id,
-    purpose,
-    visit_date: date,
-    visit_time: time,
-    status: 'pending',
-    pin: generatePin(),
-  });
-  await Audit.add({ actor: actorName(req), action: 'Created visit request', details: `${name} → ${host.name}` });
-  const full = await Visit.findById(created.id);
-  res.status(201).json(mapVisit(full));
 }
 
 export async function approveVisit(req, res) {
-  const visit = await Visit.findById(req.params.id);
-  if (!visit) return res.status(404).json({ error: 'Visit not found' });
-  if (req.user.role === 'host' && Number(req.user.hostId) !== Number(visit.host_id)) {
-    return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { visit } = await decideVisit({
+      visitId: req.params.id,
+      decision: 'approved',
+      actor: actorName(req),
+      actorHostId: req.user?.role === 'host' ? req.user.hostId : null,
+    });
+    res.json(await hydrateVisit(visit.id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Could not approve visit' });
   }
-  const pin = visit.pin || generatePin();
-  const qr_token = visit.qr_token || generateQrToken();
-  await Visit.decide(visit.id, 'approved', pin, qr_token);
-  await Audit.add({
-    actor: actorName(req),
-    action: 'Approved visit',
-    details: `${visit.ref_number} — ${visit.visitor_name}`,
-  });
-  res.json(await hydrateVisit(visit.id));
 }
 
 export async function rejectVisit(req, res) {
-  const visit = await Visit.findById(req.params.id);
-  if (!visit) return res.status(404).json({ error: 'Visit not found' });
-  if (req.user.role === 'host' && Number(req.user.hostId) !== Number(visit.host_id)) {
-    return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { visit } = await decideVisit({
+      visitId: req.params.id,
+      decision: 'rejected',
+      actor: actorName(req),
+      actorHostId: req.user?.role === 'host' ? req.user.hostId : null,
+    });
+    res.json(await hydrateVisit(visit.id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Could not reject visit' });
   }
-  await Visit.decide(visit.id, 'rejected', visit.pin, visit.qr_token);
-  await Audit.add({
-    actor: actorName(req),
-    action: 'Rejected visit',
-    details: `${visit.ref_number} — ${visit.visitor_name}`,
-  });
-  res.json(await hydrateVisit(visit.id));
 }
 
 export async function listPasses(req, res) {

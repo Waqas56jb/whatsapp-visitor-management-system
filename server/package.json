@@ -7,13 +7,16 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "migrate": "node migrations/migrate.js",
-    "seed": "node migrations/seed.js"
+    "seed": "node migrations/seed.js",
+    "whatsapp:test": "node src/whatsapp/testSend.js"
   },
   "dependencies": {
+    "axios": "^1.20.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
+    "form-data": "^4.0.6",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "pg": "^8.16.3",

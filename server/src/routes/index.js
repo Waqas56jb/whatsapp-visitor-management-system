@@ -34,14 +34,20 @@ import {
   hostVisits,
 } from '../controllers/hostController.js';
 import { rateLimit, requireAuth } from '../middleware/auth.js';
+import { verifyWebhook, receiveWebhook } from '../whatsapp/webhook.js';
+import { validatePassEndpoint } from '../controllers/passController.js';
 
 export const router = Router();
 
 router.get('/health', (req, res) => res.json({ ok: true, service: 'whatsapp-vms' }));
 
+router.get('/whatsapp/webhook', verifyWebhook);
+router.post('/whatsapp/webhook', receiveWebhook);
+
 router.post('/auth/admin/login', adminLogin);
 router.post('/auth/client/login', clientLogin);
 router.post('/visits/public', rateLimit({ max: 30 }), createPublicVisit);
+router.post('/passes/validate', rateLimit({ max: 20 }), validatePassEndpoint);
 
 router.get('/dashboard/stats', requireAuth('admin'), getDashboardStats);
 router.get('/visitors', requireAuth('admin'), listVisitors);
