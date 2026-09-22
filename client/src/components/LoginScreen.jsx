@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Building2, Eye, EyeOff, Loader2, Lock, QrCode, ShieldCheck, Sparkles, User } from 'lucide-react';
 import { toast } from 'react-toastify';
+import ScreenLoader from './ScreenLoader';
 import api, { setClientToken } from '../api/client';
 
 function BrandMark() {
@@ -24,6 +25,7 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const userRef = useRef(null);
 
   useEffect(() => {
@@ -38,6 +40,7 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
       toast.error('Enter your username and password.');
       return;
     }
+    setError('');
     setLoading(true);
     try {
       const { data } = await api.post('/auth/client/login', { username: u, password: p });
@@ -47,11 +50,14 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
       toast.success(`Welcome, ${acc.name.split(' ')[0]}`);
       onSuccess(acc);
     } catch (err) {
-      const msg = err.response?.data?.error;
+      const msg =
+        err.response?.data?.error ||
+        (err.request && !err.response ? 'Cannot reach the server. Check your connection.' : 'Incorrect username or password.');
+      setError(msg);
       if (err.response?.status === 403) {
         toast.error(msg || 'This account has been disabled. Contact your administrator.');
       } else {
-        toast.error(msg || 'Incorrect username or password.');
+        toast.error(msg);
       }
     } finally {
       setLoading(false);
@@ -60,6 +66,7 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
 
   return (
     <div id="loginScreen" className={on ? 'on' : ''} aria-hidden={!on}>
+      <ScreenLoader show={loading} label="Signing in…" />
       <div className="auth-orb auth-orb-a" />
       <div className="auth-orb auth-orb-b" />
       <button className="auth-back" onClick={onClose} type="button">
@@ -131,6 +138,7 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
               {loading ? <Loader2 size={18} className="spin" /> : <ShieldCheck size={18} strokeWidth={2.2} />}
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
+            {error ? <p className="auth-error">{error}</p> : null}
             <p className="auth-foot">Need access? Ask your administrator to create a host account.</p>
           </form>
         </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Eye, EyeOff, Loader2, Lock, QrCode, ShieldCheck, Sparkles, User, Users } from 'lucide-react';
 import { toast } from 'react-toastify';
+import ScreenLoader from './ScreenLoader';
 import api, { setAdminToken } from '../api/client';
 
 function BrandMark() {
@@ -24,6 +25,7 @@ export default function LoginScreen({ hidden, onSuccess }) {
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const userRef = useRef(null);
 
   useEffect(() => {
@@ -38,6 +40,7 @@ export default function LoginScreen({ hidden, onSuccess }) {
       toast.error('Enter your username and password.');
       return;
     }
+    setError('');
     setLoading(true);
     try {
       const { data } = await api.post('/auth/admin/login', { username: u, password: p });
@@ -45,8 +48,12 @@ export default function LoginScreen({ hidden, onSuccess }) {
       sessionStorage.setItem('botho_admin_in', '1');
       toast.success('Welcome back');
       onSuccess();
-    } catch {
-      toast.error('Incorrect username or password.');
+    } catch (err) {
+      const msg =
+        err.response?.data?.error ||
+        (err.request && !err.response ? 'Cannot reach the server. Check your connection.' : 'Incorrect username or password.');
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -54,6 +61,7 @@ export default function LoginScreen({ hidden, onSuccess }) {
 
   return (
     <div id="loginScreen" className={hidden ? 'is-hidden' : ''} aria-hidden={hidden}>
+      <ScreenLoader show={loading} label="Signing in…" />
       <div className="auth-orb auth-orb-a" />
       <div className="auth-orb auth-orb-b" />
       <div className="auth-shell">
@@ -122,6 +130,7 @@ export default function LoginScreen({ hidden, onSuccess }) {
               {loading ? <Loader2 size={18} className="spin" /> : <ShieldCheck size={18} strokeWidth={2.2} />}
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
+            {error ? <p className="auth-error">{error}</p> : null}
           </form>
         </div>
       </div>

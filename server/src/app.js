@@ -23,9 +23,22 @@ const origins = [
   ),
 ];
 
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (origins.includes(origin)) return true;
+  try {
+    const host = new URL(origin).hostname;
+    return host.endsWith('.up.railway.app') || host === 'localhost' || host === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 app.use(
   cors({
-    origin: origins,
+    origin(origin, callback) {
+      callback(null, isAllowedOrigin(origin));
+    },
     credentials: true,
   })
 );

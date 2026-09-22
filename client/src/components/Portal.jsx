@@ -25,6 +25,7 @@ import {
 import Agent from './Agent';
 import Conversations from './Conversations';
 import KnowledgeBase from './KnowledgeBase';
+import ScreenLoader from './ScreenLoader';
 import WhatsAppLink from './WhatsAppLink';
 import { initials } from '../lib/db';
 import api, { setClientToken } from '../api/client';
@@ -93,6 +94,7 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
   const [visits, setVisits] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [profile, setProfile] = useState(null);
+  const [pageLoading, setPageLoading] = useState(false);
 
   const pending = visits.filter((v) => v.status === 'pending');
   const approved = visits.filter((v) => v.status === 'approved');
@@ -101,6 +103,7 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
 
   async function fetchHostData() {
     if (!on || !currentUser) return;
+    setPageLoading(true);
     try {
       const [v, n, p] = await Promise.all([
         api.get('/host/visits'),
@@ -112,6 +115,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
       setProfile(p.data || null);
     } catch {
       onToast('Could not load portal data', true);
+    } finally {
+      setPageLoading(false);
     }
   }
 
@@ -143,6 +148,7 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
 
   return (
     <div id="app" className={on ? 'on' : ''}>
+      <ScreenLoader show={on && pageLoading} label="Loading portal…" />
       <div className={'ap-sidebar-backdrop' + (sidebarOpen ? ' open' : '')} onClick={() => setSidebarOpen(false)} />
       <div className="ap-shell">
         <aside className={'ap-sidebar' + (sidebarOpen ? ' open' : '')} id="apSidebar">

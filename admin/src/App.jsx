@@ -33,6 +33,7 @@ import {
 import { toast as notify } from 'react-toastify';
 import Conversations from './components/Conversations';
 import LoginScreen from './components/LoginScreen';
+import ScreenLoader from './components/ScreenLoader';
 import api, { getAdminToken, setAdminToken } from './api/client';
 import { initials } from './lib/db';
 
@@ -140,8 +141,10 @@ export default function App() {
   const [visitors, setVisitors] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [audit, setAudit] = useState([]);
+  const [pageLoading, setPageLoading] = useState(false);
 
   async function fetchAll() {
+    setPageLoading(true);
     try {
       const [v, h, vis, a, au, s] = await Promise.all([
         api.get('/visits'),
@@ -161,6 +164,8 @@ export default function App() {
       if (s.data?.email) setSetEmail(s.data.email);
     } catch {
       toast('Could not load data from the server', true);
+    } finally {
+      setPageLoading(false);
     }
   }
 
@@ -459,6 +464,7 @@ export default function App() {
   return (
     <>
       <LoginScreen hidden={loggedIn} onSuccess={() => setLoggedIn(true)} />
+      <ScreenLoader show={loggedIn && pageLoading} label="Loading dashboard…" />
 
       <div id="app" className={loggedIn ? 'on' : ''}>
         <div className={'sidebar-backdrop' + (sidebarOpen ? ' open' : '')} onClick={() => setSidebarOpen(false)} />
