@@ -139,6 +139,8 @@ export const Visit = {
     return query(`${VISIT_SELECT} ${clause} ORDER BY vs.created_at DESC ${lim}`, vals);
   },
   findById: (id) => queryOne(`${VISIT_SELECT} WHERE vs.id = $1`, [id]),
+  findByRef: (ref) =>
+    queryOne(`${VISIT_SELECT} WHERE LOWER(vs.ref_number) = LOWER($1)`, [String(ref || '').trim()]),
   findByToken: (token) => queryOne(`${VISIT_SELECT} WHERE vs.qr_token = $1`, [token]),
   findByPin: (pin) =>
     queryOne(`${VISIT_SELECT} WHERE vs.pin = $1 ORDER BY vs.created_at DESC LIMIT 1`, [pin]),

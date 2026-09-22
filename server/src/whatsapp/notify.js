@@ -1,7 +1,7 @@
 import { formatDate, formatDateNice } from '../utils/mappers.js';
 import { generateQrBuffer } from '../utils/generateToken.js';
 import { Settings } from '../models/index.js';
-import { sendImage, sendInteractiveButtons, sendText, uploadMedia } from './client.js';
+import { sendImage, sendText } from './sendMessage.js';
 
 async function locationLabel() {
   if (process.env.ORG_LOCATION) return process.env.ORG_LOCATION;
@@ -16,25 +16,20 @@ export async function notifyHostNewVisit(visit) {
     return;
   }
 
-  const body = [
-    'New visitor request',
-    '',
-    `Visitor: ${visit.visitor_name}`,
-    `Company: ${visit.visitor_company || '—'}`,
-    `Purpose: ${visit.purpose}`,
-    `Date: ${formatDateNice(visit.visit_date)}`,
-    `Time: ${visit.visit_time}`,
-    `Type: ${visit.visit_type === 'social' ? 'Social' : 'Official'}`,
-    `Host: ${visit.host_name}`,
-    `Reference: ${visit.ref_number}`,
-    '',
-    'Tap a button to respond.',
-  ].join('\n');
-
-  await sendInteractiveButtons(phone, body, [
-    { id: `approve_${visit.id}`, title: 'Approve' },
-    { id: `reject_${visit.id}`, title: 'Reject' },
-  ]);
+  await sendText(
+    phone,
+    [
+      '🔔 New visit request',
+      `Visitor: ${visit.visitor_name}`,
+      `Company: ${visit.visitor_company || '—'}`,
+      `Type: ${visit.visit_type === 'social' ? 'Social' : 'Official'}`,
+      `Purpose: ${visit.purpose}`,
+      `Date: ${formatDateNice(visit.visit_date)} at ${visit.visit_time}`,
+      `Reference: ${visit.ref_number}`,
+      '',
+      `Reply APPROVE ${visit.ref_number} or REJECT ${visit.ref_number}`,
+    ].join('\n')
+  );
 }
 
 export async function notifyVisitorSubmitted(visit) {
@@ -43,12 +38,10 @@ export async function notifyVisitorSubmitted(visit) {
   await sendText(
     phone,
     [
-      'Request submitted.',
+      '✅ Request submitted!',
       `Reference: ${visit.ref_number}`,
-      'Status: Pending Host Approval.',
-      '',
-      'You will receive a notification once the host responds.',
-      'Thank you for using Botho Innovations Visitor Management.',
+      'Status: Pending host approval.',
+      "You'll be notified here once your host responds.",
     ].join('\n')
   );
 }
@@ -58,28 +51,27 @@ export async function notifyVisitorApproved(visit) {
   if (!phone) return;
 
   const location = await locationLabel();
-  const text = [
-    'Your visit has been approved!',
+  const caption = [
+    '✅ Your visit has been approved!',
     `Host: ${visit.host_name}`,
     `Date: ${formatDateNice(visit.visit_date) || formatDate(visit.visit_date)}`,
     `Time: ${visit.visit_time}`,
-    `Location: ${location}.`,
-    `Your PIN: ${visit.pin}`,
-    '',
-    'Present the QR code at the security gate or share the PIN.',
+    `Location: ${location}`,
+    `Backup PIN: ${visit.pin}`,
+    'Please show this QR code or PIN at the gate.',
   ].join('\n');
 
-  await sendText(phone, text);
-
-  if (!visit.qr_token) return;
+  if (!visit.qr_token) {
+    await sendText(phone, caption);
+    return;
+  }
   try {
     const png = await generateQrBuffer(visit.qr_token);
-    const mediaId = await uploadMedia(png, `pass-${visit.ref_number}.png`);
-    if (mediaId) {
-      await sendImage(phone, { mediaId, caption: `${visit.ref_number} · PIN ${visit.pin}` });
-    }
+    const sent = await sendImage(phone, png, caption);
+    if (!sent) await sendText(phone, caption);
   } catch (err) {
-    console.error('QR delivery failed, visitor still has the PIN:', err.message);
+    console.error('QR delivery failed, sending text only:', err.message);
+    await sendText(phone, caption);
   }
 }
 
@@ -95,12 +87,12 @@ export async function notifyHostDecisionResult(hostPhone, visit, decision) {
   if (decision === 'approved') {
     await sendText(
       hostPhone,
-      `Approved.\n${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
+      `✅ Approved. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
     );
   } else {
     await sendText(
       hostPhone,
-      `Rejected.\n${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
+      `Request rejected. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
     );
   }
 }

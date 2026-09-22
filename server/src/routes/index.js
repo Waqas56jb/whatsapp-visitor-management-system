@@ -34,15 +34,15 @@ import {
   hostVisits,
 } from '../controllers/hostController.js';
 import { rateLimit, requireAuth } from '../middleware/auth.js';
-import { verifyWebhook, receiveWebhook } from '../whatsapp/webhook.js';
 import { validatePassEndpoint } from '../controllers/passController.js';
+import { whatsappQr, whatsappStatus } from '../controllers/whatsappController.js';
 
 export const router = Router();
 
 router.get('/health', (req, res) => res.json({ ok: true, service: 'whatsapp-vms' }));
 
-router.get('/whatsapp/webhook', verifyWebhook);
-router.post('/whatsapp/webhook', receiveWebhook);
+router.get('/whatsapp/status', whatsappStatus);
+router.get('/whatsapp/qr', whatsappQr);
 
 router.post('/auth/admin/login', adminLogin);
 router.post('/auth/client/login', clientLogin);

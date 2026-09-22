@@ -119,6 +119,22 @@ export async function decideVisit({ visitId, decision, actor = 'Host', actorHost
   return { visit: full, alreadyDecided: false };
 }
 
+export async function decideVisitByRef({ ref, decision, actorPhone }) {
+  const visit = await Visit.findByRef(ref);
+  if (!visit) return { error: 'I could not find that visit reference.' };
+  const host = await Host.findByPhone(actorPhone);
+  if (!host || Number(host.id) !== Number(visit.host_id)) {
+    return { error: 'This request belongs to another host.' };
+  }
+  return decideVisit({
+    visitId: visit.id,
+    decision,
+    actor: host.name,
+    actorHostId: visit.host_id,
+    notifyHostPhone: actorPhone,
+  });
+}
+
 function todayStamp() {
   const d = new Date();
   const y = d.getFullYear();

@@ -3,8 +3,26 @@
 .env.*
 !.env.example
 
+# WhatsApp Baileys session + linking QR
+auth_info_baileys/
+**/auth_info_baileys/
+whatsapp-qr.png
+**/whatsapp-qr.png
+
 # Dependencies
 node_modules
+
+# Logs
+logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+
 
 # Logs
 logs
