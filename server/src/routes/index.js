@@ -39,6 +39,7 @@ import {
   createKnowledge,
   deleteKnowledge,
   listKnowledge,
+  saveTraining,
   updateKnowledge,
 } from '../controllers/knowledgeController.js';
 import {
@@ -117,6 +118,7 @@ router.get('/host/whatsapp/status', requireAuth('host'), hostWhatsAppStatus);
 router.post('/host/whatsapp/connect', requireAuth('host'), hostWhatsAppConnect);
 router.post('/host/whatsapp/disconnect', requireAuth('host'), hostWhatsAppDisconnect);
 router.get('/host/knowledge', requireAuth('host'), listKnowledge);
+router.put('/host/knowledge/training', requireAuth('host'), saveTraining);
 router.post('/host/knowledge', requireAuth('host'), createKnowledge);
 router.patch('/host/knowledge/:id', requireAuth('host'), updateKnowledge);
 router.delete('/host/knowledge/:id', requireAuth('host'), deleteKnowledge);

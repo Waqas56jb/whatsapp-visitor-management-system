@@ -248,6 +248,16 @@ export const Knowledge = {
   },
   remove: (id, accountId) =>
     queryOne(`DELETE FROM ${T.knowledge} WHERE id = $1 AND account_id = $2 RETURNING *`, [id, accountId]),
+  upsertByKind: async (accountId, kind, { title = '', question = '', answer = '' }) => {
+    const existing = await queryOne(
+      `SELECT * FROM ${T.knowledge} WHERE account_id = $1 AND kind = $2 ORDER BY id ASC LIMIT 1`,
+      [accountId, kind]
+    );
+    if (existing) {
+      return Knowledge.update(existing.id, accountId, { title, question, answer });
+    }
+    return Knowledge.create({ account_id: accountId, kind, title, question, answer });
+  },
 };
 
 export const WhatsAppLink = {

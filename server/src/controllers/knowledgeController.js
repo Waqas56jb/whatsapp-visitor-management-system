@@ -51,3 +51,25 @@ export async function deleteKnowledge(req, res) {
   if (!row) return res.status(404).json({ error: 'Entry not found' });
   res.json({ ok: true });
 }
+
+export async function saveTraining(req, res) {
+  const accountId = req.user?.accountId;
+  if (!accountId) return res.status(400).json({ error: 'Account not linked' });
+  const greeting = String(req.body.greeting || '').trim();
+  const instruction = String(req.body.instruction || '').trim();
+  if (!greeting && !instruction) {
+    return res.status(400).json({ error: 'Add a greeting or training text' });
+  }
+  const greetingRow = await Knowledge.upsertByKind(accountId, 'greeting', {
+    title: 'greeting',
+    answer: greeting,
+  });
+  const instructionRow = await Knowledge.upsertByKind(accountId, 'instruction', {
+    title: 'instruction',
+    answer: instruction,
+  });
+  res.json({
+    greeting: mapRow(greetingRow),
+    instruction: mapRow(instructionRow),
+  });
+}
