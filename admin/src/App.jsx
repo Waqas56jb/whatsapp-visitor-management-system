@@ -465,6 +465,11 @@ export default function App() {
     if (hosts.length && !vHost) setVHost(hosts[0].name);
   }, [hosts, vHost]);
 
+  useEffect(() => {
+    document.body.classList.toggle('drawer-open', sidebarOpen);
+    return () => document.body.classList.remove('drawer-open');
+  }, [sidebarOpen]);
+
   return (
     <>
       <LoginScreen hidden={loggedIn} onSuccess={() => setLoggedIn(true)} />
@@ -534,16 +539,16 @@ export default function App() {
 
           <main className="main">
             <div className="topbar">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="topbar-lead">
                 <button className="menu-toggle" onClick={() => setSidebarOpen((o) => !o)} aria-label="Open menu">
                   <Menu size={20} strokeWidth={2} />
                 </button>
-        <div>
+                <div>
                   <h2 id="viewTitle">{titles[view][0]}</h2>
                   <p className="sub" id="viewSub">
                     {titles[view][1]}
-          </p>
-        </div>
+                  </p>
+                </div>
               </div>
               <div className="top-actions">
                 <div className="search-box">
@@ -640,7 +645,7 @@ export default function App() {
                           {recent.length ? (
                             recent.map((v) => (
                               <tr key={v.id}>
-                                <td>
+                                <td data-label="Visitor">
                                   <div className="row-flex">
                                     <div className="avatar-sm">{initials(v.visitor)}</div>
                                     <div>
@@ -649,9 +654,9 @@ export default function App() {
                                     </div>
                                   </div>
                                 </td>
-                                <td>{v.host}</td>
-                                <td>{v.date}</td>
-                                <td>
+                                <td data-label="Host">{v.host}</td>
+                                <td data-label="Date">{v.date}</td>
+                                <td data-label="Status">
                                   <Badge status={v.status} />
                                 </td>
                               </tr>
@@ -740,19 +745,19 @@ export default function App() {
                         {visitors.length ? (
                           visitors.map((v) => (
                             <tr key={v.id}>
-                              <td>
+                              <td data-label="Visitor">
                                 <div className="row-flex">
                                   <div className="avatar-sm">{initials(v.name)}</div>
                                   <div className="cell-main">{v.name}</div>
                                 </div>
                               </td>
-                              <td>{v.company}</td>
-                              <td>{v.visits}</td>
-                              <td>{v.lastVisit}</td>
-                              <td>
+                              <td data-label="Company">{v.company}</td>
+                              <td data-label="Visits">{v.visits}</td>
+                              <td data-label="Last visit">{v.lastVisit}</td>
+                              <td data-label="Status">
                                 <Badge status={v.status} />
                               </td>
-                              <td>
+                              <td data-label="Actions">
                                 <button className="btn-icon" onClick={() => viewVisitorDetail(v)} aria-label="View visitor">
                                   <MoreHorizontal size={16} />
                                 </button>
@@ -819,17 +824,17 @@ export default function App() {
                         {filteredVisits.length ? (
                           filteredVisits.map((v) => (
                             <tr key={v.id}>
-                              <td className="cell-main">{v.ref}</td>
-                              <td>{v.visitor}</td>
-                              <td>{v.host}</td>
-                              <td>{v.purpose}</td>
-                              <td>
+                              <td className="cell-main" data-label="Reference">{v.ref}</td>
+                              <td data-label="Visitor">{v.visitor}</td>
+                              <td data-label="Host">{v.host}</td>
+                              <td data-label="Purpose">{v.purpose}</td>
+                              <td data-label="Date / Time">
                                 {v.date} · {v.time}
                               </td>
-                              <td>
+                              <td data-label="Status">
                                 <Badge status={v.status} />
                               </td>
-                              <td>
+                              <td data-label="Actions">
                                 {v.status === 'pending' ? (
                                   <>
                                     <button className="btn btn-sm btn-teal" onClick={() => decideVisit(v.id, 'approved')}>
@@ -890,15 +895,15 @@ export default function App() {
                         {issued.length ? (
                           issued.map((v) => (
                             <tr key={v.id}>
-                              <td className="cell-main">{v.ref}</td>
-                              <td>{v.visitor}</td>
-                              <td>{v.pin || '—'}</td>
-                              <td>{tokenRef(v.qrToken)}</td>
-                              <td>{v.date}</td>
-                              <td>
+                              <td className="cell-main" data-label="Reference">{v.ref}</td>
+                              <td data-label="Visitor">{v.visitor}</td>
+                              <td data-label="PIN">{v.pin || '—'}</td>
+                              <td data-label="QR token">{tokenRef(v.qrToken)}</td>
+                              <td data-label="Issued">{v.date}</td>
+                              <td data-label="Status">
                                 <Badge status="active" />
                               </td>
-                              <td>
+                              <td data-label="Actions">
                                 <button className="btn btn-sm btn-danger" onClick={() => revokePass(v.id)}>
                                   <X size={13} strokeWidth={2.5} /> Revoke
                                 </button>
@@ -969,19 +974,19 @@ export default function App() {
                             const count = visits.filter((v) => v.host === h.name).length;
                             return (
                               <tr key={h.id}>
-                                <td>
+                                <td data-label="Host">
                                   <div className="row-flex">
                                     <div className="avatar-sm">{initials(h.name)}</div>
                                     <div className="cell-main">{h.name}</div>
                                   </div>
                                 </td>
-                                <td>{h.dept}</td>
-                                <td>{h.phone}</td>
-                                <td>{count}</td>
-                                <td>
+                                <td data-label="Department">{h.dept}</td>
+                                <td data-label="Phone">{h.phone}</td>
+                                <td data-label="Visits hosted">{count}</td>
+                                <td data-label="Status">
                                   <Badge status={h.status} />
                                 </td>
-                                <td>
+                                <td data-label="Actions">
                                   <div className="row-actions">
                                     {h.status === 'blocked' ? (
                                       <button className="btn btn-sm btn-ghost" onClick={() => unblockHost(h.id)}>
@@ -1045,14 +1050,14 @@ export default function App() {
                         {accounts.length ? (
                           accounts.map((a) => (
                             <tr key={a.id}>
-                              <td className="cell-main">{a.name}</td>
-                              <td>{a.username}</td>
-                              <td>{a.role}</td>
-                              <td>{a.created}</td>
-                              <td>
+                              <td className="cell-main" data-label="Client">{a.name}</td>
+                              <td data-label="Username">{a.username}</td>
+                              <td data-label="Role">{a.role}</td>
+                              <td data-label="Created">{a.created}</td>
+                              <td data-label="Status">
                                 <Badge status={a.status} />
                               </td>
-                              <td>
+                              <td data-label="Actions">
                                 <div className="row-actions">
                                   {a.status === 'blocked' ? (
                                     <button className="btn btn-sm btn-ghost" onClick={() => unblockAccount(a.id)}>
@@ -1214,10 +1219,10 @@ export default function App() {
                         {audit.length ? (
                           audit.map((a, i) => (
                             <tr key={i}>
-                              <td className="cell-sub">{a.time}</td>
-                              <td className="cell-main">{a.actor}</td>
-                              <td>{a.action}</td>
-                              <td className="cell-sub">{a.details}</td>
+                              <td className="cell-sub" data-label="Time">{a.time}</td>
+                              <td className="cell-main" data-label="Actor">{a.actor}</td>
+                              <td data-label="Action">{a.action}</td>
+                              <td className="cell-sub" data-label="Details">{a.details}</td>
                             </tr>
                           ))
                         ) : (

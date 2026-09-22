@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 function LogoMark() {
   return (
@@ -17,6 +17,8 @@ function LogoMark() {
 }
 
 export default function Landing({ hidden, navLabel, onOpenLogin }) {
+  const [navOpen, setNavOpen] = useState(false);
+
   useEffect(() => {
     const glow = document.getElementById('glow');
     const onMove = (e) => {
@@ -118,16 +120,29 @@ export default function Landing({ hidden, navLabel, onOpenLogin }) {
             <LogoMark />
             Botho Innovations
           </div>
-          <div className="nav-links">
-            <a href="#journey">How it works</a>
-            <a href="#features">Features</a>
-            <a href="#dashboard">Dashboard</a>
-            <a href="#security">Security</a>
-            <a href="#compare">Compare</a>
+          <div className={'nav-links' + (navOpen ? ' open' : '')}>
+            <a href="#journey" onClick={() => setNavOpen(false)}>How it works</a>
+            <a href="#features" onClick={() => setNavOpen(false)}>Features</a>
+            <a href="#dashboard" onClick={() => setNavOpen(false)}>Dashboard</a>
+            <a href="#security" onClick={() => setNavOpen(false)}>Security</a>
+            <a href="#compare" onClick={() => setNavOpen(false)}>Compare</a>
           </div>
-          <button className="nav-cta" id="navLoginBtn" onClick={onOpenLogin}>
-            {navLabel}
-          </button>
+          <div className="nav-actions">
+            <button className="nav-cta" id="navLoginBtn" onClick={onOpenLogin}>
+              {navLabel}
+            </button>
+            <button className="nav-toggle" type="button" aria-label="Open menu" aria-expanded={navOpen} onClick={() => setNavOpen((o) => !o)}>
+              {navOpen ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="M4 7h16M4 12h16M4 17h16" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
       </nav>
 

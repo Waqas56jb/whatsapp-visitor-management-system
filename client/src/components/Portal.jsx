@@ -124,6 +124,11 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
     fetchHostData();
   }, [on, currentUser]);
 
+  useEffect(() => {
+    document.body.classList.toggle('drawer-open', sidebarOpen);
+    return () => document.body.classList.remove('drawer-open');
+  }, [sidebarOpen]);
+
   function switchView(name) {
     setView(name);
     setSidebarOpen(false);
@@ -244,7 +249,7 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
 
         <main className="ap-main">
           <div className="ap-topbar">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="ap-topbar-lead">
               <button className="ap-menu-toggle" onClick={() => setSidebarOpen((o) => !o)} aria-label="Open menu">
                 <Menu size={20} strokeWidth={2} />
               </button>
@@ -255,8 +260,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                 </p>
               </div>
             </div>
-            <button className="ap-btn ap-btn-ghost ap-btn-sm" onClick={onBackToSite}>
-              <ArrowLeft size={14} strokeWidth={2.2} /> Back to site
+            <button className="ap-btn ap-btn-ghost ap-btn-sm ap-back-site" onClick={onBackToSite}>
+              <ArrowLeft size={14} strokeWidth={2.2} /> <span>Back to site</span>
             </button>
           </div>
 
@@ -386,7 +391,7 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                     </div>
                   </div>
                 </div>
-                <div style={{ padding: '26px 24px', display: 'flex', flexWrap: 'wrap', gap: 22, justifyContent: 'center' }} id="passesGrid">
+                <div className="ap-passes-grid" id="passesGrid">
                   {approved.length ? (
                     approved.map((v) => (
                       <div className="ap-pass-card" key={v.id}>

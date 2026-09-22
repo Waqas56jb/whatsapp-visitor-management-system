@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MessagesSquare } from 'lucide-react';
+import { ArrowLeft, MessagesSquare } from 'lucide-react';
 import api from '../api/client';
 
 function formatWhen(value) {
@@ -42,7 +42,7 @@ export default function Conversations() {
 
   return (
     <div className="ap-panel">
-      <div className="chat-split">
+      <div className={'chat-split' + (selected ? ' has-thread' : '')}>
         <aside className="chat-list">
           {loading ? (
             <p className="chat-empty">Loading conversations…</p>
@@ -68,8 +68,13 @@ export default function Conversations() {
           {selected ? (
             <>
               <div className="chat-thread-head">
-                <b>{selected.visitorName || selected.phone}</b>
-                <span>{selected.phone}</span>
+                <button className="chat-back" type="button" onClick={() => setSelected(null)} aria-label="Back to conversations">
+                  <ArrowLeft size={16} />
+                </button>
+                <div>
+                  <b>{selected.visitorName || selected.phone}</b>
+                  <span>{selected.phone}</span>
+                </div>
               </div>
               <div className="chat-bubbles">
                 {messages.map((m) => (
