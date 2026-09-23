@@ -14,18 +14,18 @@ function dataOf(state) {
   return raw && typeof raw === 'object' ? { ...raw } : {};
 }
 
-function opts(accountId) {
-  return { accountId: accountId || null };
+function opts(accountId, replyJid = null) {
+  return { accountId: accountId || null, replyJid: replyJid || null };
 }
 
-async function ask(phone, step, data, prompt, accountId = 0) {
+async function ask(phone, step, data, prompt, accountId = 0, replyJid = null) {
   await ConversationState.upsert(phone, step, { ...data, prompt }, accountId);
-  await sendText(phone, prompt, opts(accountId));
+  await sendText(phone, prompt, opts(accountId, replyJid));
 }
 
-async function sorry(phone, data, extra, accountId = 0) {
+async function sorry(phone, data, extra, accountId = 0, replyJid = null) {
   const prompt = extra || data.prompt || 'Please reply with a number.';
-  await sendText(phone, `Sorry, I didn't understand that.\n${prompt}`, opts(accountId));
+  await sendText(phone, `Sorry, I didn't understand that.\n${prompt}`, opts(accountId, replyJid));
 }
 
 export async function menuPrompt() {
@@ -39,9 +39,9 @@ export async function menuPrompt() {
   ].join('\n');
 }
 
-export async function showMenu(phone, accountId = 0) {
+export async function showMenu(phone, accountId = 0, replyJid = null) {
   const prompt = await menuPrompt();
-  await ask(phone, 'menu', {}, prompt, accountId);
+  await ask(phone, 'menu', {}, prompt, accountId, replyJid);
 }
 
 const TYPE_PROMPT = [
@@ -62,8 +62,9 @@ async function hostPrompt() {
   return { prompt: lines.join('\n'), hosts };
 }
 
-export async function handleIncomingMessage({ from, text, accountId = 0, hostId = null }) {
+export async function handleIncomingMessage({ from, text, accountId = 0, hostId = null, replyJid = null }) {
   const acct = Number(accountId) || 0;
+  const r = replyJid || null;
   const body = String(text || '').trim();
   const state = await ConversationState.findByPhone(from, acct);
   const data = dataOf(state);
@@ -71,32 +72,32 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
 
   const lower = body.toLowerCase();
   if (lower === 'menu' || lower === 'cancel') {
-    await showMenu(from, acct);
+    await showMenu(from, acct, r);
     return;
   }
 
   if (!state || !step) {
-    await showMenu(from, acct);
+    await showMenu(from, acct, r);
     return;
   }
 
   async function goPurpose(next) {
     if (hostId) {
       const host = await Host.findById(hostId);
-      await ask(from, 'purpose', { ...next, hostId, hostName: host?.name }, 'What is the purpose of your visit?', acct);
+      await ask(from, 'purpose', { ...next, hostId, hostName: host?.name }, 'What is the purpose of your visit?', acct, r);
       return;
     }
     const { prompt, hosts } = await hostPrompt();
-    await ask(from, 'host', { ...next, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, prompt, acct);
+    await ask(from, 'host', { ...next, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, prompt, acct, r);
   }
 
   if (step === 'menu') {
     if (body === '1' || lower === 'request a visit' || lower === 'request visit') {
-      await ask(from, 'visit_type', {}, TYPE_PROMPT, acct);
+      await ask(from, 'visit_type', {}, TYPE_PROMPT, acct, r);
       return;
     }
     if (body === '2' || lower.includes('status')) {
-      await ask(from, 'status_ref', {}, 'Please send your reference number (e.g. VMS-2026-001245).', acct);
+      await ask(from, 'status_ref', {}, 'Please send your reference number (e.g. VMS-2026-001245).', acct, r);
       return;
     }
     if (body === '3' || lower === 'help') {
@@ -110,12 +111,12 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
           '',
           'Reply menu at any time to start over.',
         ].join('\n'),
-        opts(acct)
+        opts(acct, r)
       );
-      await showMenu(from, acct);
+      await showMenu(from, acct, r);
       return;
     }
-    await sorry(from, data, null, acct);
+    await sorry(from, data, null, acct, r);
     return;
   }
 
@@ -124,31 +125,31 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
     if (body === '1' || lower.includes('social')) visitType = 'social';
     if (body === '2' || lower.includes('official')) visitType = 'official';
     if (!visitType) {
-      await sorry(from, data, TYPE_PROMPT, acct);
+      await sorry(from, data, TYPE_PROMPT, acct, r);
       return;
     }
     const next = { visitType, company: visitType === 'social' ? '—' : undefined };
-    await ask(from, 'name', next, 'Please reply with your full name.', acct);
+    await ask(from, 'name', next, 'Please reply with your full name.', acct, r);
     return;
   }
 
   if (step === 'name') {
     if (body.length < 2 || /^\d+$/.test(body)) {
-      await sorry(from, data, 'Please reply with your full name.', acct);
+      await sorry(from, data, 'Please reply with your full name.', acct, r);
       return;
     }
     const next = { ...data, name: body };
     if (data.visitType === 'social') {
       await goPurpose(next);
     } else {
-      await ask(from, 'company', next, 'Please reply with your company name.', acct);
+      await ask(from, 'company', next, 'Please reply with your company name.', acct, r);
     }
     return;
   }
 
   if (step === 'company') {
     if (body.length < 2) {
-      await sorry(from, data, 'Please reply with your company name.', acct);
+      await sorry(from, data, 'Please reply with your company name.', acct, r);
       return;
     }
     await goPurpose({ ...data, company: body });
@@ -164,40 +165,40 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
     if (!host) host = (await Host.findByName(body)) || (await Host.searchByName(body));
     if (!host) {
       const { prompt, hosts } = await hostPrompt();
-      await ask(from, 'host', { ...data, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, `Sorry, I didn't understand that.\n${prompt}`, acct);
+      await ask(from, 'host', { ...data, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, `Sorry, I didn't understand that.\n${prompt}`, acct, r);
       return;
     }
-    await ask(from, 'purpose', { ...data, hostId: host.id, hostName: host.name }, 'What is the purpose of your visit?', acct);
+    await ask(from, 'purpose', { ...data, hostId: host.id, hostName: host.name }, 'What is the purpose of your visit?', acct, r);
     return;
   }
 
   if (step === 'purpose') {
     if (body.length < 2) {
-      await sorry(from, data, 'What is the purpose of your visit?', acct);
+      await sorry(from, data, 'What is the purpose of your visit?', acct, r);
       return;
     }
-    await ask(from, 'date', { ...data, purpose: body }, 'Preferred date? You can send 2026-09-22, 22 Sep, or 22/09/2026.', acct);
+    await ask(from, 'date', { ...data, purpose: body }, 'Preferred date? You can send 2026-09-22, 22 Sep, or 22/09/2026.', acct, r);
     return;
   }
 
   if (step === 'date') {
     const date = parseFlexibleDate(body);
     if (date === 'past') {
-      await sorry(from, data, 'That date is in the past. Please send a future date.', acct);
+      await sorry(from, data, 'That date is in the past. Please send a future date.', acct, r);
       return;
     }
     if (!date) {
-      await sorry(from, data, 'Preferred date? You can send 2026-09-22, 22 Sep, or 22/09/2026.', acct);
+      await sorry(from, data, 'Preferred date? You can send 2026-09-22, 22 Sep, or 22/09/2026.', acct, r);
       return;
     }
-    await ask(from, 'time', { ...data, date }, 'Preferred time? You can send 10am, 10:00, or 10:00 AM.', acct);
+    await ask(from, 'time', { ...data, date }, 'Preferred time? You can send 10am, 10:00, or 10:00 AM.', acct, r);
     return;
   }
 
   if (step === 'time') {
     const time = parseFlexibleTime(body);
     if (!time) {
-      await sorry(from, data, 'Preferred time? You can send 10am, 10:00, or 10:00 AM.', acct);
+      await sorry(from, data, 'Preferred time? You can send 10am, 10:00, or 10:00 AM.', acct, r);
       return;
     }
     try {
@@ -216,8 +217,8 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
       await ConversationState.clear(from, acct);
     } catch (err) {
       console.error('WhatsApp visit create failed:', err.message);
-      await sendText(from, 'Could not create your visit request. Please reply menu and try again.', opts(acct));
-      await showMenu(from, acct);
+      await sendText(from, 'Could not create your visit request. Please reply menu and try again.', opts(acct, r));
+      await showMenu(from, acct, r);
     }
     return;
   }
@@ -225,7 +226,7 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
   if (step === 'status_ref') {
     const visit = await Visit.findByRef(body);
     if (!visit) {
-      await sorry(from, data, 'I could not find that reference. Please send it like VMS-2026-001245.', acct);
+      await sorry(from, data, 'I could not find that reference. Please send it like VMS-2026-001245.', acct, r);
       return;
     }
     await sendText(
@@ -237,11 +238,11 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
         `Date: ${formatDateNice(visit.visit_date)} at ${visit.visit_time}`,
         `Status: ${visit.status}`,
       ].join('\n'),
-      opts(acct)
+      opts(acct, r)
     );
-    await showMenu(from, acct);
+    await showMenu(from, acct, r);
     return;
   }
 
-  await showMenu(from, acct);
+  await showMenu(from, acct, r);
 }

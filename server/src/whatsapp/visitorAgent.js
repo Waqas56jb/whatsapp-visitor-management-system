@@ -41,7 +41,7 @@ const TOOLS = [
 ];
 
 function sendOpts(ctx) {
-  return { accountId: ctx.accountId || null };
+  return { accountId: ctx.accountId || null, replyJid: ctx.replyJid || null };
 }
 
 async function buildKnowledgePrompt(accountId) {
@@ -98,17 +98,14 @@ async function runTool(name, args, ctx) {
   return { error: `Unknown tool ${name}` };
 }
 
-export async function handleVisitorWithAgent({ from, text, ctx }) {
+export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null }) {
+  const inbound = { ...(ctx || {}), replyJid: replyJid || ctx?.replyJid || null };
   if (!process.env.OPENAI_API_KEY) {
-    await handleIncomingMessage({ from, text, accountId: ctx.accountId || 0, hostId: ctx.hostId });
-    return;
-  }
-  if (!ctx.hostId) {
-    await handleIncomingMessage({ from, text, accountId: ctx.accountId || 0 });
+    await handleIncomingMessage({ from, text, accountId: inbound.accountId || 0, hostId: inbound.hostId, replyJid: inbound.replyJid });
     return;
   }
 
-  const accountId = ctx.accountId || 0;
+  const accountId = inbound.accountId || 0;
   const kb = await buildKnowledgePrompt(accountId);
   const prior = await ConversationState.findByPhone(from, accountId);
   const history = Array.isArray(prior?.collected_data?.history) ? prior.collected_data.history : [];
@@ -117,14 +114,16 @@ export async function handleVisitorWithAgent({ from, text, ctx }) {
       role: 'system',
       content: [
         `You are the WhatsApp booking assistant for ${kb.org}.`,
-        `You speak for host account "${ctx.hostName || 'the host'}". Bookings always go to this host — do not ask who they are visiting.`,
+        inbound.hostName
+          ? `You speak for host account "${inbound.hostName}". Bookings always go to this host — do not ask who they are visiting.`
+          : 'Help the visitor book a visit with the linked host.',
         'Collect: full name, company (if official), purpose, date (YYYY-MM-DD), time, and social vs official.',
         'When you have enough, call book_visit. Then tell the visitor their reference and that the host will approve.',
         'Answer FAQs from the knowledge base. Use the greeting on the first turn.',
         kb.greeting ? `Greeting to use:\n${kb.greeting}` : '',
         kb.instruction ? `Extra instructions:\n${kb.instruction}` : '',
         kb.qa ? `Knowledge base:\n${kb.qa}` : '',
-        'Keep replies short. Same language as the visitor. No PIN — approved visitors get a QR pass.',
+        'Keep replies short. Same language as the visitor. Approved visitors get a QR pass and a backup PIN.',
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -157,7 +156,7 @@ export async function handleVisitorWithAgent({ from, text, ctx }) {
           } catch {
             args = {};
           }
-          const result = await runTool(call.function.name, args, { ...ctx, from });
+          const result = await runTool(call.function.name, args, { ...inbound, from });
           messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         }
         continue;
@@ -167,7 +166,7 @@ export async function handleVisitorWithAgent({ from, text, ctx }) {
     }
   } catch (err) {
     console.error('Visitor agent failed:', err.message);
-    await handleIncomingMessage({ from, text, accountId, hostId: ctx.hostId });
+    await handleIncomingMessage({ from, text, accountId, hostId: inbound.hostId, replyJid: inbound.replyJid });
     return;
   }
 
@@ -177,5 +176,10 @@ export async function handleVisitorWithAgent({ from, text, ctx }) {
     .map((m) => ({ role: m.role, content: String(m.content || '').slice(0, 2000) }))
     .slice(-16);
   await ConversationState.upsert(from, 'ai', { history: storedHistory }, accountId);
-  await sendText(from, reply, sendOpts(ctx));
+  const sent = await sendText(from, reply, sendOpts(inbound));
+  if (!sent) {
+    console.error('Visitor agent reply was not delivered');
+    await handleIncomingMessage({ from, text, accountId, hostId: inbound.hostId, replyJid: inbound.replyJid });
+  }
 }
+

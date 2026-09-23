@@ -31,11 +31,25 @@ export async function sendText(jid, text, options = {}) {
     const accountId = options.accountId || null;
     const sock = options.sock || readySock(accountId);
     if (!sock) return false;
-    const to = toJid(jid);
-    if (!to) return false;
-    await sock.sendMessage(to, { text: String(text) });
-    await logOutgoing(to, String(text), accountId);
-    return true;
+    const destinations = [];
+    if (options.replyJid) destinations.push(options.replyJid);
+    if (String(jid || '').includes('@')) destinations.push(String(jid));
+    const converted = toJid(jid);
+    if (converted) destinations.push(converted);
+    const unique = [...new Set(destinations.filter(Boolean))];
+    let lastError = null;
+    for (const to of unique) {
+      try {
+        await sock.sendMessage(to, { text: String(text) });
+        await logOutgoing(to, String(text), accountId);
+        return true;
+      } catch (err) {
+        lastError = err;
+        console.error(`sendText failed to ${to}:`, err.message);
+      }
+    }
+    if (lastError) console.error('sendText failed:', lastError.message);
+    return false;
   } catch (err) {
     console.error('sendText failed:', err.message);
     return false;
@@ -47,14 +61,25 @@ export async function sendImage(jid, imagePathOrBuffer, caption, options = {}) {
     const accountId = options.accountId || null;
     const sock = options.sock || readySock(accountId);
     if (!sock) return false;
-    const to = toJid(jid);
-    if (!to) return false;
+    const destinations = [];
+    if (options.replyJid) destinations.push(options.replyJid);
+    if (String(jid || '').includes('@')) destinations.push(String(jid));
+    const converted = toJid(jid);
+    if (converted) destinations.push(converted);
+    const unique = [...new Set(destinations.filter(Boolean))];
     const image = Buffer.isBuffer(imagePathOrBuffer)
       ? imagePathOrBuffer
       : { url: imagePathOrBuffer };
-    await sock.sendMessage(to, { image, caption: caption || undefined });
-    await logOutgoing(to, caption || '[image]', accountId);
-    return true;
+    for (const to of unique) {
+      try {
+        await sock.sendMessage(to, { image, caption: caption || undefined });
+        await logOutgoing(to, caption || '[image]', accountId);
+        return true;
+      } catch (err) {
+        console.error(`sendImage failed to ${to}:`, err.message);
+      }
+    }
+    return false;
   } catch (err) {
     console.error('sendImage failed:', err.message);
     return false;

@@ -69,7 +69,7 @@ export default function WhatsAppLink({ onToast }) {
           <div className="wa-linked">
             <Link2 size={28} strokeWidth={1.7} />
             <b>Connected as {status.user?.name || status.user?.id || 'WhatsApp'}</b>
-            <p>Visitors who message this number are handled by your knowledge-base AI agent. Approve from this portal or reply APPROVE VMS-… in WhatsApp.</p>
+            <p>Visitors who message <b>this WhatsApp number from a different phone</b> get an automatic reply from your knowledge-base AI. Do not test by messaging yourself from the same phone.</p>
             <button className="ap-btn ap-btn-danger ap-btn-sm" onClick={disconnect} disabled={busy}>
               <Unplug size={14} /> Unlink
             </button>

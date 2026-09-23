@@ -53,11 +53,10 @@ export function getSock(key = 'admin') {
 }
 
 export function getSockForAccount(accountId) {
-  if (accountId) {
-    const session = sessions.get(clientSessionKey(accountId));
-    if (session?.sock) return session.sock;
-  }
-  return getSock('admin');
+  if (!accountId) return getSock('admin');
+  const session = sessions.get(clientSessionKey(accountId));
+  if (session?.sock) return session.sock;
+  return null;
 }
 
 export function getQrFilePath() {
@@ -223,10 +222,16 @@ export async function startWhatsApp(options = {}) {
 
 export async function startClientWhatsApp(accountId, hostId) {
   if (!accountId) throw new Error('accountId is required');
+  let resolvedHostId = hostId || null;
+  if (!resolvedHostId) {
+    const { Host } = await import('../models/index.js');
+    const host = await Host.findByAccountId(accountId);
+    resolvedHostId = host?.id || null;
+  }
   return startSession(clientSessionKey(accountId), {
     listenMessages: true,
     accountId,
-    hostId: hostId || null,
+    hostId: resolvedHostId,
   });
 }
 
