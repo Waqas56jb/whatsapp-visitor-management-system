@@ -222,6 +222,14 @@ export const Visit = {
       [id, status, qr_token, pin]
     ),
   setStatus: (id, status) => queryOne(`UPDATE ${T.visits} SET status = $2 WHERE id = $1 RETURNING *`, [id, status]),
+  // New date/time goes back to the host for approval; the old QR/PIN stop working.
+  reschedule: (id, date, time) =>
+    queryOne(
+      `UPDATE ${T.visits}
+       SET visit_date = $2, visit_time = $3, status = 'pending', qr_token = NULL, pin = NULL, decided_at = NULL
+       WHERE id = $1 RETURNING *`,
+      [id, date, time]
+    ),
   // Visits that hold a host's time slot (pending or approved) from a date onwards.
   listOpenFrom: (date) =>
     query(

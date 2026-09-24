@@ -75,6 +75,30 @@ export async function notifyHostNewVisit(visit) {
   return { sent, reason: sent ? null : 'send_failed' };
 }
 
+export async function notifyHostRescheduled(visit, previous) {
+  const host = visit.host_id ? await Host.findById(visit.host_id) : null;
+  const phone = normalizePhone(host?.phone || visit.host_phone);
+  const visitorPhone = normalizePhone(visitorPhoneOf(visit));
+  if (!phone || host?.status === 'blocked' || (visitorPhone && phone === visitorPhone)) return { sent: false };
+  const portal = portalRequestsLink();
+  const sent = await sendTextToPhone(
+    phone,
+    [
+      `Hello ${String(visit.host_name || '').split(' ')[0]}, ${visit.visitor_name} would like to move their visit.`,
+      '',
+      `From: ${formatVisitDate(previous.date, 'en')} at ${formatVisitTime(previous.time, 'en')}`,
+      `To: ${formatVisitDate(formatDate(visit.visit_date), 'en')} at ${formatVisitTime(visit.visit_time, 'en')}`,
+      `Company: ${visit.visitor_company || '—'}`,
+      `Purpose: ${visit.purpose}`,
+      `Reference: ${visit.ref_number}`,
+      '',
+      'You are free at the new time. Please approve or reject it in the Client Portal:',
+      portal || 'Client Portal → Visit requests',
+    ].join('\n')
+  );
+  return { sent };
+}
+
 export async function notifyHostCancelled(visit) {
   const host = visit.host_id ? await Host.findById(visit.host_id) : null;
   const phone = normalizePhone(host?.phone || visit.host_phone);

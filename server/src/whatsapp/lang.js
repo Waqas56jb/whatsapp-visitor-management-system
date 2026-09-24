@@ -95,9 +95,14 @@ export function isSlotsQuery(text) {
   );
 }
 
+// "move my 3pm meeting to 4pm", "reschedule VMS-2026-000123 to tomorrow 10am", "fetola nako ya ketelo ya me".
 export function isReschedule(text) {
-  return /\b(reschedule|re-schedule|postpone|change (my|the) (visit|booking|appointment|time|date)|move (my|the) (visit|booking|appointment))\b/i.test(
-    String(text || '')
+  const value = String(text || '').toLowerCase();
+  return (
+    /\b(reschedule|re-schedule|postpone|prepone)\b/.test(value) ||
+    /\b(shift|move|change|push|bring)\b.{0,40}\b(visit|meeting|booking|appointment|slot|vms-\d{4}-\d+)\b/.test(value) ||
+    /\b(shift|move|push)\b.{0,30}\bto\b\s*(\d|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next)/.test(value) ||
+    /\bfetola\b.{0,30}\b(ketelo|nako|letlha|kopano)\b/.test(value)
   );
 }
 

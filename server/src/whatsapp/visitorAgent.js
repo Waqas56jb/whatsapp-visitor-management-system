@@ -1,12 +1,13 @@
 // I/O wrapper around the pure booking engine: loads state, performs actions, persists, replies.
 import { ConversationState, Settings, Visit } from '../models/index.js';
 import { listActiveHosts } from '../services/hosts.js';
-import { cancelVisitByVisitor, createPendingVisit } from '../services/visits.js';
+import { cancelVisitByVisitor, createPendingVisit, rescheduleVisitByVisitor } from '../services/visits.js';
 import { nowTime, todayStamp } from '../utils/dateParse.js';
 import { formatDate } from '../utils/mappers.js';
 import { normalizePhone } from '../utils/phone.js';
 import { conflictAt } from './availability.js';
-import { afterBooking, afterCancel, currentPrompt, loadState, runTurn } from './bookingEngine.js';
+import { afterBooking, afterCancel, afterReschedule, currentPrompt, loadState, runTurn } from './bookingEngine.js';
+import { understandMessage } from './understand.js';
 import { answerVisitor, loadVisitorVisits } from './faq.js';
 import { formatVisitDate, formatVisitTime, statusLabel, t } from './messages.js';
 import { sendText } from './sendMessage.js';
@@ -117,7 +118,18 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
     loadOpenBookings(today),
   ]);
   const orgName = settings?.org_name || 'Botho Innovations';
-  const turn = runTurn(previous, text, { hosts, today, now, orgName, visits, bookings });
+  const engineCtx = { hosts, today, now, orgName, visits, bookings };
+  let turn = runTurn(previous, text, engineCtx);
+
+  // The rule-based parser could not act on this message: let the AI work out which operation the
+  // visitor means, then run that operation through the same engine (which validates everything).
+  if (turn.actions.some((a) => a.type === 'faq')) {
+    const command = await understandMessage({ message: text, visits, hosts, history: previous.history, today });
+    if (command) {
+      const retry = runTurn(previous, command, engineCtx);
+      if (!retry.actions.some((a) => a.type === 'faq')) turn = { ...retry, state: { ...retry.state, lang: turn.state.lang } };
+    }
+  }
 
   let state = turn.state;
   let reply = turn.reply;
@@ -127,6 +139,15 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
       const booked = afterBooking(state, outcome, { hosts, bookings: outcome.bookings || bookings, today, now });
       state = booked.state;
       reply = joinReplies(reply, booked.reply);
+    } else if (action.type === 'reschedule') {
+      const outcome = await rescheduleVisitByVisitor({ ref: action.ref, visitorPhone: from, date: action.date, time: action.time }).catch((err) => {
+        console.error('Visit reschedule failed:', err.message);
+        return { ok: false };
+      });
+      const fresh = outcome.reason === 'slot_taken' ? await loadOpenBookings(today) : bookings;
+      const moved = afterReschedule(state, outcome, { bookings: fresh, today, now });
+      state = moved.state;
+      reply = joinReplies(reply, moved.reply);
     } else if (action.type === 'cancel') {
       const outcome = await cancelVisitByVisitor({ ref: action.ref, visitorPhone: from }).catch((err) => {
         console.error('Visit cancel failed:', err.message);

@@ -6,6 +6,7 @@ import { KNOWLEDGE_DEFAULTS } from '../config/knowledgeDefaults.js';
 import { ConversationLog, Knowledge, Visit } from '../models/index.js';
 import { formatDate } from '../utils/mappers.js';
 import { normalizeText } from './hostMatch.js';
+import { bestSnippet, buildChunks, searchKnowledge, tokenize } from './knowledgeSearch.js';
 import { formatVisitDate, formatVisitTime, statusLabel, t } from './messages.js';
 
 const HISTORY_LIMIT = 30;
@@ -24,6 +25,7 @@ async function loadKnowledge() {
     answer: r.answer || '',
   }));
   return {
+    rows,
     qa,
     instruction: byKind('instruction').map((r) => r.answer).filter(Boolean).join('\n') || KNOWLEDGE_DEFAULTS.instruction,
     rules: byKind('rule').map((r) => `${r.title ? `${r.title}: ` : ''}${r.answer}`).join('\n'),
@@ -85,13 +87,21 @@ const ABOUT_OWN_VISIT =
   /\b(re?q[a-z]{0,2}u?e?s?t|reuqest|booking|booked|book|app?oi?ntment|oppointment|visit|applied|reference|ref|status|approved?|rejected|declined|host|pass|qr|pin|update|given|sent|forwarded|received|confirm(ed)?|kopo|ketelo)\b/i;
 
 // Deterministic answer used without an API key, or if the model call fails.
-function fallbackAnswer({ question, lang, visits, kb }) {
+function fallbackAnswer({ question, lang, visits, kb, hits = [] }) {
   const q = normalizeText(question);
   const namesHost = visits.some((v) => normalizeText(v.host).split(' ').some((part) => part.length > 2 && ` ${q} `.includes(` ${part} `)));
   if (visits.length && (ABOUT_OWN_VISIT.test(question) || namesHost)) {
     return t(lang, 'visit.latest', { summary: describeVisit(visits[0], lang) });
   }
-  return keywordAnswer(question, kb.qa) || t(lang, 'faq.fallback');
+  const qa = keywordAnswer(question, kb.qa);
+  if (qa) return qa;
+  const top = hits[0];
+  const needed = Math.min(2, new Set(tokenize(question)).size);
+  if (top && needed && (top.matched >= needed || top.score >= 3)) {
+    const text = bestSnippet(question, top) || top.text.slice(0, 400);
+    return t(lang, 'kb.found', { text, source: top.source });
+  }
+  return t(lang, 'faq.fallback');
 }
 
 function plain(text) {
@@ -104,7 +114,9 @@ function plain(text) {
 
 export async function answerVisitor({ phone, question, lang = 'en', orgName = 'Botho Innovations', hosts = [], slots = {}, pendingQuestion = '' }) {
   const [kb, visits, transcript] = await Promise.all([loadKnowledge(), loadVisitorVisits(phone), loadTranscript(phone)]);
-  if (!process.env.OPENAI_API_KEY) return fallbackAnswer({ question, lang, visits, kb });
+  const searchable = kb.rows.filter((r) => ['document', 'text', 'website', 'rule', 'qa'].includes(r.kind));
+  const hits = searchKnowledge(question, buildChunks(searchable), 6);
+  if (!process.env.OPENAI_API_KEY) return fallbackAnswer({ question, lang, visits, kb, hits });
 
   const language = lang === 'tn' ? 'Setswana' : 'English';
   const hostLines = hosts.map((h) => `${h.name}${h.department && h.department !== '—' ? ` (${h.department})` : ''}`).join('\n');
@@ -136,7 +148,9 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
     kb.instruction ? `Company instructions:\n${kb.instruction}` : '',
     kb.rules ? `Company rules:\n${kb.rules}` : '',
     kb.qa.length ? `FAQs:\n${kb.qa.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n')}` : '',
-    kb.documents ? `Company documents:\n${kb.documents}` : '',
+    hits.length
+      ? `Company knowledge relevant to this question, taken from the company's websites, files, and notes. Answer from it (translate to ${language} if needed) and mention the source briefly:\n${hits.map((h) => `[${h.source}] ${h.text}`).join('\n\n')}`
+      : 'No company document matched this question.',
     hostLines ? `People and departments visitors can book:\n${hostLines}` : '',
   ]
     .filter(Boolean)
@@ -161,5 +175,5 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
   } catch (err) {
     console.error('Visitor answer failed:', err.message);
   }
-  return fallbackAnswer({ question, lang, visits, kb });
+  return fallbackAnswer({ question, lang, visits, kb, hits });
 }

@@ -62,6 +62,7 @@ export const TN = {
   'Checked in': 'O tsene',
   Cancelled: 'E khanseletswe',
   'Cancelled visit': 'Ketelo e khanseletswe',
+  'Rescheduled visit': 'Ketelo e fetoletswe nako e nngwe',
   Blocked: 'E thibetswe',
   Active: 'E a dira',
   Visitor: 'Moeti',

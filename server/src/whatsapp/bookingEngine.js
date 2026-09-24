@@ -1,7 +1,7 @@
 // Deterministic WhatsApp booking state machine. Pure: no DB, no network, no LLM.
 // Slots are the only source of truth; the LLM is only ever used to answer FAQs (see faq.js).
 import dayjs from 'dayjs';
-import { extractDate, todayStamp } from '../utils/dateParse.js';
+import { extractDate, extractTime, todayStamp } from '../utils/dateParse.js';
 import { conflictAt, freeSlots, hostBookings, nearestFree, officeHours, timeProblem, toMinutes, SLOT_MINUTES } from './availability.js';
 import { departmentOf, matchHosts, pickOption } from './hostMatch.js';
 import {
@@ -46,7 +46,7 @@ export function freshState(prev = {}) {
   };
 }
 
-const STAGES = ['idle', 'collecting', 'choose_host', 'confirm', 'confirm_cancel', 'choose_cancel'];
+const STAGES = ['idle', 'collecting', 'choose_host', 'confirm', 'confirm_cancel', 'choose_cancel', 'reschedule_pick', 'reschedule_time'];
 
 // Accepts whatever is stored in the DB. Anything from the old engine starts a clean booking.
 export function loadState(data) {
@@ -62,6 +62,9 @@ export function loadState(data) {
     hostOptions: Array.isArray(data.hostOptions) ? data.hostOptions : [],
     cancelRef: data.cancelRef || null,
     cancelOptions: Array.isArray(data.cancelOptions) ? data.cancelOptions : [],
+    rescheduleRef: data.rescheduleRef || null,
+    rescheduleOptions: Array.isArray(data.rescheduleOptions) ? data.rescheduleOptions : [],
+    rescheduleTo: data.rescheduleTo || null,
   };
 }
 
@@ -464,6 +467,121 @@ function handleChooseCancel(state, raw, ctx) {
   return { reply: t(state.lang, 'cancel.confirm', { summary: visitSummary(visit, state.lang) }) };
 }
 
+// ---- Moving a booked visit ("move my 3pm meeting to 4pm") ----
+
+// Splits "move my 3pm meeting to 4pm" into the part naming the visit and the part with the new time.
+function splitMove(raw) {
+  const m = raw.match(/^(.*)\s(?:to|into|for|go|ka)\s+(.+)$/i);
+  if (m && (extractTime(m[2], { bare: false }) || extractDate(m[2]))) return { from: m[1], to: m[2] };
+  return { from: '', to: raw };
+}
+
+function newSlotFrom(text, visit, ctx) {
+  const date = extractDate(text, ctx.today);
+  const time = extractTime(text);
+  return { date: date && date !== 'past' ? date : visit?.date || null, time: time || null, pastDate: date === 'past' };
+}
+
+// Validates and either books the move or explains why it cannot happen.
+function proposeMove(state, visit, target, ctx) {
+  const hours = ctx.hours || officeHours();
+  if (target.pastDate) {
+    state.stage = 'reschedule_time';
+    state.rescheduleRef = visit.ref;
+    return { reply: t(state.lang, 'date.past') };
+  }
+  if (!target.time) {
+    state.stage = 'reschedule_time';
+    state.rescheduleRef = visit.ref;
+    return { reply: t(state.lang, 'reschedule.askTime', { summary: visitSummary(visit, state.lang) }) };
+  }
+  if (target.date === visit.date && target.time === visit.time) {
+    resetToIdle(state);
+    return { reply: t(state.lang, 'reschedule.same') };
+  }
+  const problem = timeProblem({ date: target.date, time: target.time, today: ctx.today, now: ctx.now, hours });
+  const others = (ctx.bookings || []).filter((b) => b.ref !== visit.ref);
+  state.stage = 'reschedule_time';
+  state.rescheduleRef = visit.ref;
+  if (problem) return { reply: problem === 'past' ? t(state.lang, 'time.past') : t(state.lang, 'time.closed', hours) };
+  if (conflictAt(others, visit.hostId, target.date, target.time)) {
+    const free = freeSlots({ bookings: others, hostId: visit.hostId, date: target.date, today: ctx.today, now: ctx.now, hours });
+    if (!free.length) return { reply: t(state.lang, 'slot.fullDay', { host: visit.host, date: formatVisitDate(target.date, state.lang) }) };
+    return {
+      reply: t(state.lang, 'reschedule.taken', {
+        host: visit.host,
+        time: target.time,
+        date: formatVisitDate(target.date, state.lang),
+        free: nearestFree(free, target.time, 6).join(', '),
+      }),
+    };
+  }
+  return { reply: '', actions: [{ type: 'reschedule', ref: visit.ref, date: target.date, time: target.time }] };
+}
+
+function handleRescheduleIntent(state, raw, ctx) {
+  const open = openVisits(ctx);
+  resetToIdle(state);
+  if (!open.length) return { reply: t(state.lang, 'reschedule.none') };
+  const { from, to } = splitMove(raw);
+  const ref = raw.match(REF_RE)?.[0]?.toUpperCase();
+  let candidates = ref ? open.filter((v) => v.ref.toUpperCase() === ref) : open;
+  if (!ref && from) {
+    const fromTime = extractTime(from);
+    const fromDate = extractDate(from, ctx.today);
+    const named = matchHosts(from, activeHosts(ctx.hosts)).map((h) => Number(h.id));
+    const narrowed = candidates.filter(
+      (v) =>
+        (!fromTime || v.time === fromTime) &&
+        (!fromDate || fromDate === 'past' || v.date === fromDate) &&
+        (!named.length || named.includes(Number(v.hostId)))
+    );
+    if (narrowed.length) candidates = narrowed;
+  }
+  const target = newSlotFrom(to, null, ctx);
+  if (candidates.length > 1) {
+    state.stage = 'reschedule_pick';
+    state.rescheduleOptions = candidates.map((v) => v.ref);
+    state.rescheduleTo = target.time || target.date ? { date: target.date, time: target.time } : null;
+    const list = candidates.map((v, i) => `${i + 1}. ${visitSummary(v, state.lang)}`).join('\n');
+    return { reply: t(state.lang, 'reschedule.pick', { list }) };
+  }
+  const visit = candidates[0];
+  return proposeMove(state, visit, { ...target, date: target.date || visit.date, time: target.time || (target.date ? visit.time : null) }, ctx);
+}
+
+function handleReschedulePick(state, raw, ctx) {
+  if (isNo(raw)) {
+    resetToIdle(state);
+    return { reply: t(state.lang, 'cancel.keptAll') };
+  }
+  const open = openVisits(ctx).filter((v) => state.rescheduleOptions.includes(v.ref));
+  const num = raw.match(/^(?:no\.?|number|nomoro)?\s*(\d{1,2})[.)]?$/i);
+  const ref = raw.match(REF_RE)?.[0]?.toUpperCase();
+  const visit = num ? open.find((v) => v.ref === state.rescheduleOptions[Number(num[1]) - 1]) : open.find((v) => v.ref.toUpperCase() === ref);
+  if (!visit) return { reply: t(state.lang, 'cancel.pick') };
+  const pending = state.rescheduleTo || {};
+  state.rescheduleOptions = [];
+  state.rescheduleTo = null;
+  return proposeMove(state, visit, { date: pending.date || visit.date, time: pending.time || null }, ctx);
+}
+
+function handleRescheduleTime(state, raw, ctx) {
+  if (isNo(raw)) {
+    resetToIdle(state);
+    return { reply: t(state.lang, 'cancel.keptAll') };
+  }
+  const visit = openVisits(ctx).find((v) => v.ref === state.rescheduleRef);
+  if (!visit) {
+    resetToIdle(state);
+    return { reply: t(state.lang, 'reschedule.none') };
+  }
+  const date = extractDate(raw, ctx.today);
+  const time = extractTime(raw, { bare: true });
+  if (!time && !date) return { reply: t(state.lang, 'retry.time') };
+  return proposeMove(state, visit, { date: date && date !== 'past' ? date : visit.date, time: time || (date ? visit.time : null), pastDate: date === 'past' }, ctx);
+}
+
 function handleStatus(state, ctx) {
   const visits = (ctx.visits || []).slice(0, 5);
   const reply = visits.length
@@ -535,13 +653,13 @@ export function runTurn(
   }
 
   if (state.stage === 'confirm_cancel' && !isCancel(raw)) return result(handleConfirmCancel(state, raw, ctx));
+  if (state.stage === 'reschedule_pick' && !isCancel(raw)) return result(handleReschedulePick(state, raw, ctx));
+  if (state.stage === 'reschedule_time' && !isCancel(raw) && !isStatusRequest(raw)) return result(handleRescheduleTime(state, raw, ctx));
   if (state.stage === 'choose_cancel' && !isCancel(raw)) return result(handleChooseCancel(state, raw, ctx));
   if (isCancel(raw)) return result(handleCancelIntent(state, raw, ctx));
   if (isStatusRequest(raw)) return result(handleStatus(state, ctx));
   if (isSlotsQuery(raw)) return result(handleSlots(state, raw, ctx));
-  if (isReschedule(raw) && state.stage !== 'confirm') {
-    return result({ reply: join(t(state.lang, 'reschedule.help'), draftStarted(state) ? currentPrompt(state) : '') });
-  }
+  if (isReschedule(raw) && !draftStarted(state)) return result(handleRescheduleIntent(state, raw, ctx));
   if (mentionsDecision(raw)) {
     return result({ reply: join(t(state.lang, 'approveDenied'), currentPrompt(state)) });
   }
@@ -562,6 +680,40 @@ export function runTurn(
   if (state.stage === 'confirm') return result(handleConfirm(state, raw, ctx));
   if (state.stage === 'choose_host') return result(handleChooseHost(state, raw, ctx));
   return result(handleCollect(state, raw, ctx));
+}
+
+// Applies the outcome of a move made by the caller.
+export function afterReschedule(prevState, outcome, { bookings = [], today = todayStamp(), now = null, hours = officeHours() } = {}) {
+  const state = JSON.parse(JSON.stringify(loadState(prevState)));
+  if (outcome.ok) {
+    resetToIdle(state);
+    return {
+      state,
+      reply: t(state.lang, 'reschedule.done', {
+        host: outcome.hostName,
+        ref: outcome.ref,
+        date: formatVisitDate(outcome.date, state.lang),
+        time: formatVisitTime(outcome.time, state.lang),
+      }),
+    };
+  }
+  if (outcome.reason === 'slot_taken') {
+    const others = bookings.filter((b) => b.ref !== outcome.ref);
+    const free = freeSlots({ bookings: others, hostId: outcome.hostId, date: outcome.date, today, now, hours });
+    state.stage = 'reschedule_time';
+    state.rescheduleRef = outcome.ref;
+    return {
+      state,
+      reply: t(state.lang, 'reschedule.taken', {
+        host: outcome.hostName,
+        time: outcome.time,
+        date: formatVisitDate(outcome.date, state.lang),
+        free: nearestFree(free, outcome.time, 6).join(', ') || t(state.lang, 'slots.noneFree'),
+      }),
+    };
+  }
+  resetToIdle(state);
+  return { state, reply: t(state.lang, 'reschedule.failed') };
 }
 
 // Applies the outcome of a cancellation made by the caller.

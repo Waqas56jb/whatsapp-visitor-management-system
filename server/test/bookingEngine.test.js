@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { afterBooking, afterCancel, runTurn } from '../src/whatsapp/bookingEngine.js';
+import { afterBooking, afterCancel, afterReschedule, runTurn } from '../src/whatsapp/bookingEngine.js';
 import { matchHosts } from '../src/whatsapp/hostMatch.js';
 import { extractFields } from '../src/whatsapp/slotExtract.js';
 import { detectLanguage } from '../src/whatsapp/lang.js';
@@ -43,6 +43,12 @@ function chat(messages, { hosts = HOSTS, state = null, visits = [], bookings = [
       if (action.type === 'cancel') {
         const done = afterCancel(next, { ok: true, ref: action.ref, hostName: 'Hamza' });
         log.push({ text, reply: done.reply, cancelled: action.ref, state: done.state });
+        next = done.state;
+        reply = null;
+      }
+      if (action.type === 'reschedule') {
+        const done = afterReschedule(next, { ok: true, ref: action.ref, hostName: 'Waqas Naveed', date: action.date, time: action.time });
+        log.push({ text, reply: done.reply, moved: { ref: action.ref, date: action.date, time: action.time }, state: done.state });
         next = done.state;
         reply = null;
       }
@@ -545,9 +551,55 @@ describe('status and rebooking', () => {
     assert.equal(state.stage, 'collecting');
   });
 
-  test('reschedule explains cancel + rebook', () => {
+  test('reschedule without a new time asks for it', () => {
     const { replies } = chat(['I want to reschedule my visit'], { visits: APPROVED });
-    assert.match(replies[0], /send "cancel"/);
+    assert.match(replies[0], /What new date and time would you like for this visit\?\nVMS-2026-563706/);
+  });
+});
+
+// Mirrors the live data: Waqas Naveed is booked at 14:00, 15:00 and 16:00 on 25 September.
+const WAQAS_DAY = [
+  { ref: 'VMS-2026-430049', hostId: 9, date: '2026-09-25', time: '14:00', status: 'approved' },
+  { ref: 'VMS-2026-956931', hostId: 9, date: '2026-09-25', time: '15:00', status: 'approved' },
+  { ref: 'VMS-2026-563706', hostId: 9, date: '2026-09-25', time: '16:00', status: 'approved' },
+];
+
+describe('moving a visit', () => {
+  test('"move my 4pm meeting to 3:30pm": slot is free, so it moves', () => {
+    const { log } = chat(['move my 4pm meeting to 3:30 pm'], { visits: APPROVED, bookings: WAQAS_DAY });
+    assert.deepEqual(log[0].moved, { ref: 'VMS-2026-563706', date: '2026-09-25', time: '15:30' });
+    assert.match(log[0].reply, /Waqas Naveed is free at that time, so I have moved your visit VMS-2026-563706 to Friday, 25 September 2026 at 3:30 PM\.\nWaqas Naveed needs to approve the new time/);
+  });
+
+  test('taken slot: says why, offers free times, then moves on the next answer', () => {
+    const { log } = chat(['shift my 4pm meeting to 3pm', '4:30 pm'], { visits: APPROVED, bookings: WAQAS_DAY });
+    assert.match(log[0].reply, /Waqas Naveed is not free at 15:00 on Friday, 25 September 2026/);
+    assert.match(log[0].reply, /Free times that day: .*16:30/);
+    assert.doesNotMatch(log[0].reply.split('Free times')[1], /\b(14|15):00\b/);
+    assert.deepEqual(log[1].moved, { ref: 'VMS-2026-563706', date: '2026-09-25', time: '16:30' });
+  });
+
+  test('moving to another day keeps the same time', () => {
+    const { log } = chat(['move my meeting to Monday'], { visits: APPROVED, bookings: WAQAS_DAY });
+    assert.deepEqual(log[0].moved, { ref: 'VMS-2026-563706', date: '2026-09-28', time: '16:00' });
+  });
+
+  test('several visits: pick by number, keep the requested new time', () => {
+    const visits = [...APPROVED, { ref: 'VMS-2026-000777', hostId: 10, host: 'Hamza', date: '2026-09-28', time: '10:00', status: 'pending' }];
+    const { log } = chat(['reschedule my visit to 11am', '2'], { visits, bookings: WAQAS_DAY });
+    assert.match(log[0].reply, /Which visit would you like to move\?/);
+    assert.deepEqual(log[1].moved, { ref: 'VMS-2026-000777', date: '2026-09-28', time: '11:00' });
+  });
+
+  test('outside office hours is refused', () => {
+    const { replies } = chat(['move my 4pm meeting to 6pm'], { visits: APPROVED, bookings: WAQAS_DAY });
+    assert.match(replies[0], /between 08:00 and 17:00/);
+  });
+
+  test('Setswana', () => {
+    const { log } = chat(['Ke batla go fetola nako ya ketelo ya me go 11am'], { visits: APPROVED, bookings: WAQAS_DAY });
+    assert.deepEqual(log[0].moved, { ref: 'VMS-2026-563706', date: '2026-09-25', time: '11:00' });
+    assert.match(log[0].reply, /ke fetoletse ketelo ya gago/);
   });
 });
 

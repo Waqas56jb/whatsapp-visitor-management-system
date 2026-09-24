@@ -11,6 +11,7 @@ import { normalizePhone } from '../utils/phone.js';
 import {
   notifyHostCancelled,
   notifyHostDecisionResult,
+  notifyHostRescheduled,
   notifyHostNewVisit,
   notifyVisitorApproved,
   notifyVisitorRejected,
@@ -111,6 +112,38 @@ export async function cancelVisitByVisitor({ ref, visitorPhone }) {
   const full = await Visit.findById(visit.id);
   await notifyHostCancelled(full).catch((err) => console.error('Host cancel notify failed:', err.message));
   return { ok: true, ref: full.ref_number, hostName: full.host_name };
+}
+
+// A visitor moves their own upcoming visit. The slot is re-checked against live data, the visit goes
+// back to pending for the host to approve, and the host is told about the change.
+export async function rescheduleVisitByVisitor({ ref, visitorPhone, date, time }) {
+  const visit = await Visit.findByRef(ref);
+  if (!visit) return { ok: false, reason: 'not_found' };
+  const owner = normalizePhone(visit.visitor_phone || visit.visitor_profile_phone);
+  if (!owner || owner !== normalizePhone(visitorPhone)) return { ok: false, reason: 'not_owner' };
+  if (!['pending', 'approved'].includes(visit.status)) return { ok: false, reason: 'not_open' };
+
+  const open = await Visit.listOpenFrom(date);
+  const taken = (open || []).some((b) => {
+    if (b.ref_number === visit.ref_number || Number(b.host_id) !== Number(visit.host_id)) return false;
+    if (formatDate(b.visit_date) !== date) return false;
+    const [h1, m1] = String(b.visit_time).slice(0, 5).split(':').map(Number);
+    const [h2, m2] = String(time).split(':').map(Number);
+    return Math.abs(h1 * 60 + m1 - (h2 * 60 + m2)) < 30;
+  });
+  const base = { ref: visit.ref_number, hostId: visit.host_id, hostName: visit.host_name, date, time };
+  if (taken) return { ok: false, reason: 'slot_taken', ...base };
+
+  const previous = { date: formatDate(visit.visit_date), time: String(visit.visit_time).slice(0, 5) };
+  await Visit.reschedule(visit.id, date, time);
+  await Audit.add({
+    actor: visit.visitor_name || 'Visitor',
+    action: 'Rescheduled visit',
+    details: `${visit.ref_number} — ${previous.date} ${previous.time} → ${date} ${time} (by visitor on WhatsApp)`,
+  });
+  const full = await Visit.findById(visit.id);
+  await notifyHostRescheduled(full, previous).catch((err) => console.error('Host reschedule notify failed:', err.message));
+  return { ok: true, ...base };
 }
 
 export async function decideVisit({ visitId, decision, actor = 'Host', actorHostId = null, notifyHostPhone = null }) {
