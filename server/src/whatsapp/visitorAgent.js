@@ -8,7 +8,8 @@ import { normalizePhone } from '../utils/phone.js';
 import { conflictAt } from './availability.js';
 import { afterBooking, afterCancel, afterReschedule, currentPrompt, loadState, runTurn } from './bookingEngine.js';
 import { understandMessage } from './understand.js';
-import { answerVisitor, loadVisitorVisits } from './faq.js';
+import { answerVisitor, loadKnowledgeChunks, loadVisitorVisits } from './faq.js';
+import { knowsAbout } from './knowledgeSearch.js';
 import { formatVisitDate, formatVisitTime, statusLabel, t } from './messages.js';
 import { sendText } from './sendMessage.js';
 
@@ -110,15 +111,16 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
   const sendOpts = { accountId: accountId || null, replyJid: replyJid || ctx.replyJid || null };
   const today = todayStamp();
   const now = nowTime();
-  const [previous, hosts, settings, visits, bookings] = await Promise.all([
+  const [previous, hosts, settings, visits, bookings, chunks] = await Promise.all([
     loadConversation(from),
     listActiveHosts(),
     Settings.get().catch(() => null),
     loadVisitorVisits(from, 5),
     loadOpenBookings(today),
+    loadKnowledgeChunks().catch(() => []),
   ]);
   const orgName = settings?.org_name || 'Botho Innovations';
-  const engineCtx = { hosts, today, now, orgName, visits, bookings };
+  const engineCtx = { hosts, today, now, orgName, visits, bookings, knows: (value) => knowsAbout(value, chunks), visitorName: visits[0]?.visitorName || '' };
   let turn = runTurn(previous, text, engineCtx);
 
   // The rule-based parser could not act on this message: let the AI work out which operation the
@@ -167,6 +169,7 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
         hosts,
         slots: state.slots,
         pendingQuestion: action.followUp,
+        topics: action.topics || [],
       });
       reply = joinReplies(reply, answer, action.followUp);
     }

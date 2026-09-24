@@ -24,11 +24,11 @@ const HOSTS_WITH_PROCUREMENT = [
   { id: 11, name: 'Lesego Dintwa', department: 'Procurement', status: 'active' },
 ];
 
-function chat(messages, { hosts = HOSTS, state = null, visits = [], bookings = [], now = null } = {}) {
+function chat(messages, { hosts = HOSTS, state = null, visits = [], bookings = [], now = null, knows = null, visitorName = '' } = {}) {
   const log = [];
   let current = state;
   for (const text of messages) {
-    let { state: next, reply, actions } = runTurn(current, text, { hosts, today: TODAY, now, visits, bookings });
+    let { state: next, reply, actions } = runTurn(current, text, { hosts, today: TODAY, now, visits, bookings, knows, visitorName });
     for (const action of actions) {
       if (action.type === 'book') {
         const booked = afterBooking(
@@ -52,7 +52,7 @@ function chat(messages, { hosts = HOSTS, state = null, visits = [], bookings = [
         next = done.state;
         reply = null;
       }
-      if (action.type === 'faq') reply = `[faq] ${action.followUp}`;
+      if (action.type === 'faq') reply = `[faq${action.topics?.length ? ` after: ${action.topics.join(' | ')}` : ''}] ${action.followUp}`;
       if (action.type === 'status') reply = `[status ${action.ref}]`;
     }
     if (reply !== null) log.push({ text, reply, state: next });
@@ -429,7 +429,7 @@ describe('production transcript 25/09 00:02 (questions about an existing request
     assert.equal(log[1].reply, '[faq] ');
     assert.equal(log[1].state.slots.name, '');
     assert.equal(log[2].reply, 'Which company are you visiting from?');
-    assert.equal(log[3].reply, '[faq] Which company are you visiting from?');
+    assert.equal(log[3].reply, '[faq after: have you given my reuqest to waqas] Which company are you visiting from?');
     assert.equal(log[3].state.slots.company, '');
     assert.equal(state.slots.company, 'Ai Consultant');
   });
@@ -650,5 +650,82 @@ describe('matchers', () => {
     assert.equal(found.name, 'Waqas Naveed');
     assert.equal(found.company, 'Astra');
     assert.equal(found.host, undefined);
+  });
+});
+
+// Words that appear in the company knowledge (stand-in for the real knowledge search).
+const KNOWS = (text) => /\b(cipa|company|companies|values?|fees?|bofinet|fibre|data)\b/i.test(text);
+
+describe('knowledge follow-ups keep the topic', () => {
+  test('screenshot 22:29: "What is cipa" → "How much is a company" → "Values" are all questions in one topic', () => {
+    const { replies } = chat(['What is cipa', 'How much is a company', 'Values'], { knows: KNOWS });
+    assert.equal(replies[0], '[faq] ');
+    assert.equal(replies[1], '[faq after: What is cipa] ');
+    assert.equal(replies[2], '[faq after: What is cipa | How much is a company] ');
+  });
+
+  test('"Values" never triggers the welcome or becomes a name', () => {
+    const { replies, state } = chat(['Hi', 'what is bofinet?', 'Values'], { knows: KNOWS });
+    assert.match(replies[2], /^\[faq after: what is bofinet\?\]/);
+    assert.equal(state.slots.name, '');
+  });
+
+  test('a real name after the welcome is still the name', () => {
+    const { replies, state } = chat(['Hi', 'what is bofinet?', 'Michael Ntsima'], { knows: KNOWS });
+    assert.equal(state.slots.name, 'Michael Ntsima');
+    assert.equal(replies[2], 'Which company are you visiting from?');
+  });
+
+  test('once a booking has started, a company answer that is also a knowledge word stays a booking answer', () => {
+    const { state } = chat(['Hi', 'Michael Ntsima', 'BoFiNet'], { knows: KNOWS });
+    assert.equal(state.slots.company, 'BoFiNet');
+  });
+
+  test('a greeting starts a fresh topic', () => {
+    const { replies } = chat(['What is cipa', 'Hi', 'what is bofinet?'], { knows: KNOWS });
+    assert.equal(replies[2], '[faq] ');
+  });
+});
+
+describe('returning visitor greeting', () => {
+  const KNOWN = [{ ref: 'VMS-2026-463383', hostId: 4, host: 'Botho Prince', date: '2026-09-25', time: '10:00', status: 'approved', visitorName: 'Michael Ntsima' }];
+
+  test('client example: greeted by name with the booking, not the official welcome', () => {
+    const { replies, state } = chat(['Hi'], { visits: KNOWN, visitorName: 'Michael Ntsima' });
+    assert.equal(
+      replies[0],
+      'Hello Michael Ntsima, how can I help you today?\n\nYou have a booking VMS-2026-463383 with Botho Prince on Friday, 25 September 2026 at 10:00 AM.'
+    );
+    assert.equal(state.stage, 'idle');
+  });
+
+  test('pending booking says it is waiting for approval; several bookings are listed', () => {
+    const pending = chat(['Hi'], { visits: [{ ...KNOWN[0], status: 'pending' }], visitorName: 'Michael Ntsima' });
+    assert.match(pending.replies[0], /waiting for Botho Prince to approve it\.$/);
+    const two = [...KNOWN, { ...KNOWN[0], ref: 'VMS-2026-000111', host: 'Hamza', date: '2026-09-28', time: '09:00' }];
+    const many = chat(['Hi'], { visits: two, visitorName: 'Michael Ntsima' });
+    assert.match(many.replies[0], /You have 2 upcoming bookings:\n1\. VMS-2026-463383.*\n2\. VMS-2026-000111/);
+  });
+
+  test('known visitor without upcoming bookings just gets the hello', () => {
+    const { replies } = chat(['Hello'], { visits: [{ ...KNOWN[0], status: 'cancelled' }], visitorName: 'Michael Ntsima' });
+    assert.equal(replies[0], 'Hello Michael Ntsima, how can I help you today?');
+  });
+
+  test('Setswana', () => {
+    const { replies } = chat(['Dumela'], { visits: KNOWN, visitorName: 'Michael Ntsima' });
+    assert.equal(replies[0], 'Dumela Michael Ntsima, nka go thusa jang gompieno?\n\nO na le ketelo VMS-2026-463383 le Botho Prince ka Labotlhano, 25 Lwetse 2026 ka 10:00.');
+  });
+
+  test('after the greeting, booking, cancelling and questions all work', () => {
+    const book = chat(['Hi', 'I want to book another visit'], { visits: KNOWN, visitorName: 'Michael Ntsima' });
+    assert.match(book.replies[1], /^Welcome to Botho Innovations/);
+    const cancel = chat(['Hi', 'cancel it'], { visits: KNOWN, visitorName: 'Michael Ntsima' });
+    assert.match(cancel.replies[1], /Do you want to cancel this visit\?/);
+  });
+
+  test('new numbers still get the official welcome', () => {
+    const { replies } = chat(['Hi']);
+    assert.match(replies[0], /^Welcome to Botho Innovations Visitor Management System/);
   });
 });

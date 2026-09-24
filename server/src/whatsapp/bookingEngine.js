@@ -42,6 +42,7 @@ export function freshState(prev = {}) {
     cancelOptions: [],
     lastRef: prev.lastRef || null,
     notedKey: prev.notedKey || null,
+    faqTopics: [],
     history: Array.isArray(prev.history) ? prev.history.slice(-20) : [],
   };
 }
@@ -65,6 +66,7 @@ export function loadState(data) {
     rescheduleRef: data.rescheduleRef || null,
     rescheduleOptions: Array.isArray(data.rescheduleOptions) ? data.rescheduleOptions : [],
     rescheduleTo: data.rescheduleTo || null,
+    faqTopics: Array.isArray(data.faqTopics) ? data.faqTopics.slice(-3) : [],
   };
 }
 
@@ -250,6 +252,15 @@ function handleCollect(state, raw, ctx) {
   const startField = asked || missingField(state.slots) || 'name';
   const found = extractFields(raw, { today: ctx.today, orgName: ctx.orgName, startField, known: filledMap(state.slots) });
   const anyFound = Object.keys(found).length > 0;
+
+  // A short follow-up about something in the company knowledge ("values", "data centre") after a
+  // question — or before any booking has started — is a question, not a name or company.
+  const started = Object.values(state.slots).some(Boolean);
+  if (!started && !anyFound && ctx.knows?.(raw) && (wasIdle || state.faqTopics.length)) {
+    if (wasIdle) state.stage = 'idle';
+    state.welcomed = true;
+    return { reply: '', actions: [{ type: 'faq', question: raw, followUp: '' }] };
+  }
 
   // Questions are answered, not stored — unless they clearly carry booking details
   // ("Can I visit Hamza tomorrow at 10am?").
@@ -616,6 +627,31 @@ function handleSlots(state, raw, ctx) {
   return { reply: join(reply, draftStarted(state) ? currentPrompt(state) : '') };
 }
 
+// The name exactly as the visitor registered it: guessing a "first name" is unreliable
+// (e.g. "Botho Michael" would become "Botho").
+function greetingName(name) {
+  return String(name || '')
+    .trim()
+    .split(/\s+/)
+    .map((w) => (w === w.toLowerCase() || w === w.toUpperCase() ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w))
+    .join(' ');
+}
+
+// "Hello Michael, how can I help you today?" + the visitor's upcoming bookings.
+function knownGreeting(state, ctx) {
+  const lang = state.lang;
+  const hello = t(lang, 'greet.known', { name: greetingName(ctx.visitorName) });
+  const upcoming = openVisits(ctx).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+  if (!upcoming.length) return hello;
+  if (upcoming.length === 1) {
+    const v = upcoming[0];
+    const vars = { ref: v.ref, host: v.host, date: formatVisitDate(v.date, lang), time: formatVisitTime(v.time, lang) };
+    return join(hello, t(lang, v.status === 'pending' ? 'greet.bookingPending' : 'greet.booking', vars));
+  }
+  const list = upcoming.slice(0, 5).map((v, i) => `${i + 1}. ${visitSummary(v, lang)}`).join('\n');
+  return join(hello, t(lang, 'greet.bookings', { count: upcoming.length, list }));
+}
+
 // Reminds a returning visitor of their open request once per request/status, not on every greeting.
 function existingNote(state, ctx) {
   const open = openVisits(ctx)[0];
@@ -632,16 +668,32 @@ function existingNote(state, ctx) {
 export function runTurn(
   prevState,
   input,
-  { hosts = [], today = todayStamp(), now = null, orgName = 'Botho Innovations', visits = [], bookings = [], hours = officeHours() } = {}
+  { hosts = [], today = todayStamp(), now = null, orgName = 'Botho Innovations', visits = [], bookings = [], hours = officeHours(), knows = null, visitorName = '' } = {}
 ) {
   const state = JSON.parse(JSON.stringify(loadState(prevState)));
   const raw = String(input || '').trim();
   state.lang = normalizeLang(detectLanguage(raw) || state.lang);
-  const ctx = { hosts, today, now, orgName, visits, bookings, hours };
-  const result = (out) => ({ state, reply: out.reply || '', actions: out.actions || [] });
+  const ctx = { hosts, today, now, orgName, visits, bookings, hours, knows, visitorName };
+  // Every question the visitor asks is remembered as the conversation's topic, so vague
+  // follow-ups ("how much?", "values") are understood in context.
+  const result = (out) => {
+    const actions = out.actions || [];
+    const faq = actions.find((a) => a.type === 'faq');
+    if (faq) {
+      faq.topics = [...state.faqTopics];
+      state.faqTopics = [...state.faqTopics, faq.question].slice(-3);
+    }
+    return { state, reply: out.reply || '', actions };
+  };
 
   if (!raw) {
     return result({ reply: join(t(state.lang, 'textOnly'), currentPrompt(state) || t(state.lang, 'faq.startBooking')) });
+  }
+
+  // A returning visitor is greeted by name with their upcoming bookings, not the official welcome.
+  if (isGreetingOnly(raw) && ctx.visitorName) {
+    resetToIdle(state);
+    return result({ reply: knownGreeting(state, ctx) });
   }
 
   // The welcome asks for "Names" first, so the next plain reply is treated as the name.

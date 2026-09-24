@@ -6,7 +6,7 @@ import { KNOWLEDGE_DEFAULTS } from '../config/knowledgeDefaults.js';
 import { ConversationLog, Knowledge, Visit } from '../models/index.js';
 import { formatDate } from '../utils/mappers.js';
 import { normalizeText } from './hostMatch.js';
-import { bestSnippet, buildChunks, searchKnowledge, tokenize } from './knowledgeSearch.js';
+import { bestDefinition, bestSnippetScored, buildChunks, searchWithTopic, sectionAnswer, tokenize } from './knowledgeSearch.js';
 import { formatVisitDate, formatVisitTime, statusLabel, t } from './messages.js';
 
 const HISTORY_LIMIT = 30;
@@ -36,10 +36,16 @@ async function loadKnowledge() {
 }
 
 // The visitor's own requests, newest first, straight from the database.
+export async function loadKnowledgeChunks() {
+  const rows = await Knowledge.listAll().catch(() => []);
+  return buildChunks((rows || []).filter((r) => ['document', 'text', 'website', 'rule', 'qa'].includes(r.kind)));
+}
+
 export async function loadVisitorVisits(phone, limit = 5) {
   const rows = await Visit.listByVisitorPhone(phone, limit).catch(() => []);
   return (rows || []).map((v) => ({
     ref: v.ref_number,
+    visitorName: v.visitor_name,
     hostId: v.host_id,
     host: v.host_name,
     department: v.host_department && v.host_department !== '—' ? v.host_department : '',
@@ -87,7 +93,7 @@ const ABOUT_OWN_VISIT =
   /\b(re?q[a-z]{0,2}u?e?s?t|reuqest|booking|booked|book|app?oi?ntment|oppointment|visit|applied|reference|ref|status|approved?|rejected|declined|host|pass|qr|pin|update|given|sent|forwarded|received|confirm(ed)?|kopo|ketelo)\b/i;
 
 // Deterministic answer used without an API key, or if the model call fails.
-function fallbackAnswer({ question, lang, visits, kb, hits = [] }) {
+function fallbackAnswer({ question, lang, visits, kb, hits = [], topics = [], chunks = [], rows = [] }) {
   const q = normalizeText(question);
   const namesHost = visits.some((v) => normalizeText(v.host).split(' ').some((part) => part.length > 2 && ` ${q} `.includes(` ${part} `)));
   if (visits.length && (ABOUT_OWN_VISIT.test(question) || namesHost)) {
@@ -95,11 +101,25 @@ function fallbackAnswer({ question, lang, visits, kb, hits = [] }) {
   }
   const qa = keywordAnswer(question, kb.qa);
   if (qa) return qa;
-  const top = hits[0];
+  const quote = (text, source) => t(lang, 'kb.found', { text: text.length > 600 ? `${text.slice(0, 600)}…` : text, source });
+
+  // "What is X": the sentence that actually defines X, searched across all the knowledge.
+  const definition = bestDefinition(question, chunks);
+  if (definition) return quote(definition.text, definition.source);
+  // "values", "our vision", "mission": the text under that section heading.
+  const section = sectionAnswer(question, rows);
+  if (section) return quote(section.text, section.source);
+
+  // Otherwise the single best-matching sentence across the top passages — the question's own words
+  // first, the conversation topic only when they find nothing.
   const needed = Math.min(2, new Set(tokenize(question)).size);
-  if (top && needed && (top.matched >= needed || top.score >= 3)) {
-    const text = bestSnippet(question, top) || top.text.slice(0, 400);
-    return t(lang, 'kb.found', { text, source: top.source });
+  const usable = hits.slice(0, 8).filter((hit) => needed && (hit.matched >= needed || hit.score >= 3));
+  for (const query of [question, `${question} ${topics.slice(-1).join(' ')}`]) {
+    const best = usable
+      .map((hit) => ({ hit, ...bestSnippetScored(query, hit) }))
+      .filter((x) => x.text)
+      .sort((a, b) => b.score - a.score)[0];
+    if (best) return quote(best.text, best.hit.source);
   }
   return t(lang, 'faq.fallback');
 }
@@ -112,11 +132,16 @@ function plain(text) {
     .trim();
 }
 
-export async function answerVisitor({ phone, question, lang = 'en', orgName = 'Botho Innovations', hosts = [], slots = {}, pendingQuestion = '' }) {
+export async function answerVisitor({ phone, question, lang = 'en', orgName = 'Botho Innovations', hosts = [], slots = {}, pendingQuestion = '', topics = [] }) {
   const [kb, visits, transcript] = await Promise.all([loadKnowledge(), loadVisitorVisits(phone), loadTranscript(phone)]);
   const searchable = kb.rows.filter((r) => ['document', 'text', 'website', 'rule', 'qa'].includes(r.kind));
-  const hits = searchKnowledge(question, buildChunks(searchable), 6);
-  if (!process.env.OPENAI_API_KEY) return fallbackAnswer({ question, lang, visits, kb, hits });
+  const chunks = buildChunks(searchable);
+  const hits = searchWithTopic(question, chunks, topics, 8);
+  const section = sectionAnswer(question, searchable);
+  if (section && !hits.some((h) => h.text.includes(section.text.slice(0, 60)))) {
+    hits.unshift({ source: section.source, text: section.text, tokens: [], score: 99, matched: 1 });
+  }
+  if (!process.env.OPENAI_API_KEY) return fallbackAnswer({ question, lang, visits, kb, hits, topics, chunks, rows: searchable });
 
   const language = lang === 'tn' ? 'Setswana' : 'English';
   const hostLines = hosts.map((h) => `${h.name}${h.department && h.department !== '—' ? ` (${h.department})` : ''}`).join('\n');
@@ -134,6 +159,9 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
     `You are the WhatsApp receptionist of ${orgName} (Botswana) for visitor bookings.`,
     `Reply only in ${language}. If ${language} is Setswana, write natural, correct Setswana.`,
     'You have read the full chat history with this visitor (the earlier messages below). Use it to understand what they mean and never ask again for something already answered there.',
+    topics.length
+      ? `The conversation is about: "${topics.slice(-2).join('" then "')}". Treat short or vague messages ("values", "how much?", "and the fees?", "who runs it?") as follow-ups about that same subject, and answer them in that context.`
+      : '',
     'Answer the visitor’s latest message directly, warmly, and professionally, in one to three short sentences. Plain text only: no markdown, no asterisks, no bullet points.',
     'Facts about their own visit requests come ONLY from "Visitor’s visit requests" below — it is live from the database. Quote the reference, host, date, time, and status exactly. pending = waiting for the host to approve; approved = approved, the QR pass was sent on WhatsApp; rejected = declined by the host; cancelled = cancelled by the visitor; used = already checked in.',
     'Visitors can cancel a visit by sending "cancel", check their visits by sending "status", and see a host’s free times by asking e.g. "free slots for Hamza tomorrow". Each visit takes a 30-minute slot and visitors are received during office hours.',
@@ -175,5 +203,5 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
   } catch (err) {
     console.error('Visitor answer failed:', err.message);
   }
-  return fallbackAnswer({ question, lang, visits, kb, hits });
+  return fallbackAnswer({ question, lang, visits, kb, hits, topics, chunks, rows: searchable });
 }
