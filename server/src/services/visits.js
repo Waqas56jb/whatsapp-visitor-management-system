@@ -9,6 +9,7 @@ import { generatePin, generateQrToken, generateRef } from '../utils/generateToke
 import { formatDate } from '../utils/mappers.js';
 import { normalizePhone } from '../utils/phone.js';
 import {
+  notifyHostCancelled,
   notifyHostDecisionResult,
   notifyHostNewVisit,
   notifyVisitorApproved,
@@ -90,6 +91,26 @@ export async function createPendingVisit({
     );
   }
   return full;
+}
+
+// A visitor cancels their own upcoming visit from WhatsApp. The pass stops working because
+// validation only accepts approved visits.
+export async function cancelVisitByVisitor({ ref, visitorPhone }) {
+  const visit = await Visit.findByRef(ref);
+  if (!visit) return { ok: false, reason: 'not_found' };
+  const owner = normalizePhone(visit.visitor_phone || visit.visitor_profile_phone);
+  if (!owner || owner !== normalizePhone(visitorPhone)) return { ok: false, reason: 'not_owner' };
+  if (!['pending', 'approved'].includes(visit.status)) return { ok: false, reason: 'not_open' };
+
+  await Visit.setStatus(visit.id, 'cancelled');
+  await Audit.add({
+    actor: visit.visitor_name || 'Visitor',
+    action: 'Cancelled visit',
+    details: `${visit.ref_number} — ${visit.visitor_name} → ${visit.host_name} (cancelled by visitor on WhatsApp)`,
+  });
+  const full = await Visit.findById(visit.id);
+  await notifyHostCancelled(full).catch((err) => console.error('Host cancel notify failed:', err.message));
+  return { ok: true, ref: full.ref_number, hostName: full.host_name };
 }
 
 export async function decideVisit({ visitId, decision, actor = 'Host', actorHostId = null, notifyHostPhone = null }) {

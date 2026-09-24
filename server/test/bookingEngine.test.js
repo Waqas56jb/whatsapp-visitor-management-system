@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { afterBooking, runTurn } from '../src/whatsapp/bookingEngine.js';
+import { afterBooking, afterCancel, runTurn } from '../src/whatsapp/bookingEngine.js';
 import { matchHosts } from '../src/whatsapp/hostMatch.js';
 import { extractFields } from '../src/whatsapp/slotExtract.js';
 import { detectLanguage } from '../src/whatsapp/lang.js';
@@ -24,11 +24,11 @@ const HOSTS_WITH_PROCUREMENT = [
   { id: 11, name: 'Lesego Dintwa', department: 'Procurement', status: 'active' },
 ];
 
-function chat(messages, { hosts = HOSTS, state = null } = {}) {
+function chat(messages, { hosts = HOSTS, state = null, visits = [], bookings = [], now = null } = {}) {
   const log = [];
   let current = state;
   for (const text of messages) {
-    let { state: next, reply, actions } = runTurn(current, text, { hosts, today: TODAY });
+    let { state: next, reply, actions } = runTurn(current, text, { hosts, today: TODAY, now, visits, bookings });
     for (const action of actions) {
       if (action.type === 'book') {
         const booked = afterBooking(
@@ -38,6 +38,12 @@ function chat(messages, { hosts = HOSTS, state = null } = {}) {
         );
         log.push({ text, reply: booked.reply, booked: { ...next.slots }, state: booked.state });
         next = booked.state;
+        reply = null;
+      }
+      if (action.type === 'cancel') {
+        const done = afterCancel(next, { ok: true, ref: action.ref, hostName: 'Hamza' });
+        log.push({ text, reply: done.reply, cancelled: action.ref, state: done.state });
+        next = done.state;
         reply = null;
       }
       if (action.type === 'faq') reply = `[faq] ${action.followUp}`;
@@ -427,6 +433,121 @@ describe('production transcript 25/09 00:02 (questions about an existing request
     assert.equal(state.slots.hostId, 10);
     assert.equal(state.slots.date, '2026-09-25');
     assert.equal(state.slots.time, '10:00');
+  });
+});
+
+const ONE_LINER = 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm';
+const HAMZA_3PM = [{ ref: 'VMS-2026-000900', hostId: 10, date: '2026-09-25', time: '15:00', status: 'approved' }];
+
+describe('30-minute host slots', () => {
+  test('a taken slot is refused with the nearest free times; 30 minutes later is fine', () => {
+    const { replies, state } = chat(['Hi', ONE_LINER, '3:30 pm'], { bookings: HAMZA_3PM });
+    assert.match(replies[1], /Hamza already has a visit at 15:00 on Friday, 25 September 2026/);
+    assert.match(replies[1], /Available times that day: 13:30, 14:00, 14:30, 15:30, 16:00, 16:30/);
+    assert.equal(state.slots.time, '15:30');
+    assert.equal(state.stage, 'confirm');
+  });
+
+  test('2:30 pm is free when 3 pm is booked, 2:45 pm is not', () => {
+    const ok = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', '25 September', '2:30 pm'], { bookings: HAMZA_3PM });
+    assert.equal(ok.state.stage, 'confirm');
+    const clash = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', '25 September', '2:45 pm'], { bookings: HAMZA_3PM });
+    assert.match(clash.replies.at(-1), /already has a visit at 15:00/);
+    assert.equal(clash.state.slots.time, '');
+  });
+
+  test('the time question lists the host’s free times', () => {
+    const { replies } = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', '25 September'], { bookings: HAMZA_3PM });
+    assert.match(replies.at(-1), /What time will you arrive/);
+    assert.match(replies.at(-1), /Available times for Hamza on Friday, 25 September 2026: 08:00, 08:30/);
+    assert.doesNotMatch(replies.at(-1).split('Available times')[1], /15:00/);
+    const empty = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Naledi', '25 September'], { bookings: HAMZA_3PM });
+    assert.doesNotMatch(empty.replies.at(-1), /Available times/);
+  });
+
+  test('outside office hours and already-passed times are refused', () => {
+    const late = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', '25 September', '7 pm']);
+    assert.match(late.replies.at(-1), /between 08:00 and 17:00/);
+    const past = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', 'today', '9 am'], { now: '11:10' });
+    assert.match(past.replies.at(-1), /already passed today/);
+  });
+
+  test('a fully booked day asks for another date', () => {
+    const full = [];
+    for (let m = 8 * 60; m <= 16 * 60 + 30; m += 30) {
+      full.push({ ref: `R${m}`, hostId: 10, date: '2026-09-25', time: `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`, status: 'pending' });
+    }
+    const { replies, state } = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', '25 September'], { bookings: full });
+    assert.match(replies.at(-1), /Hamza is fully booked on Friday, 25 September 2026/);
+    assert.equal(state.slots.date, '');
+  });
+
+  test('free slot question', () => {
+    const { replies } = chat(['free slots for Hamza tomorrow'], { bookings: HAMZA_3PM });
+    assert.match(replies[0], /Hamza, Friday, 25 September 2026\nBooked: 15:00\nAvailable: 08:00/);
+    assert.doesNotMatch(replies[0].split('Available:')[1], /15:00/);
+  });
+});
+
+const APPROVED = [{ ref: 'VMS-2026-563706', hostId: 9, host: 'Waqas Naveed', date: '2026-09-25', time: '16:00', status: 'approved', purpose: 'Ai consultant' }];
+
+describe('cancelling', () => {
+  test('production transcript 25/09 00:29: "Cancel it" really cancels the approved visit after YES', () => {
+    const { log } = chat(['Hi', 'Hi', 'Cancel it', 'yes'], { visits: APPROVED });
+    assert.match(log[0].reply, /You already have a visit request: VMS-2026-563706/);
+    assert.doesNotMatch(log[1].reply, /You already have/);
+    assert.match(log[2].reply, /Do you want to cancel this visit\?\nVMS-2026-563706, host Waqas Naveed, Friday, 25 September 2026 at 4:00 PM\. Status: Approved\./);
+    assert.equal(log[3].cancelled, 'VMS-2026-563706');
+    assert.match(log[3].reply, /Your visit VMS-2026-563706 has been cancelled/);
+  });
+
+  test('NO keeps the visit', () => {
+    const { replies } = chat(['cancel my booking', 'no'], { visits: APPROVED });
+    assert.equal(replies[1], 'Okay, your visit VMS-2026-563706 is still booked.');
+  });
+
+  test('cancel while a booking is being typed stops only the draft', () => {
+    const { replies, state } = chat(['Hi', 'Michael', 'cancel'], { visits: APPROVED });
+    assert.match(replies[2], /Nothing was submitted/);
+    assert.equal(state.slots.name, '');
+  });
+
+  test('several visits: choose by number, then confirm', () => {
+    const visits = [...APPROVED, { ref: 'VMS-2026-000777', hostId: 10, host: 'Hamza', date: '2026-09-28', time: '10:00', status: 'pending' }];
+    const { log } = chat(['cancel', '2', 'yes'], { visits });
+    assert.match(log[0].reply, /Which visit would you like to cancel\?/);
+    assert.match(log[1].reply, /VMS-2026-000777/);
+    assert.equal(log[2].cancelled, 'VMS-2026-000777');
+  });
+
+  test('nothing to cancel', () => {
+    const { replies } = chat(['cancel'], { visits: [{ ...APPROVED[0], status: 'rejected' }] });
+    assert.equal(replies[0], 'You have no upcoming visit requests to cancel.');
+  });
+
+  test('Setswana cancel', () => {
+    const { replies } = chat(['Ke batla go khansela ketelo ya me', 'Ee'], { visits: APPROVED });
+    assert.match(replies[0], /A o batla go khansela ketelo e\?/);
+    assert.match(replies[1], /e khanseletswe/);
+  });
+});
+
+describe('status and rebooking', () => {
+  test('status lists the visitor’s requests', () => {
+    const { replies } = chat(['check my booking status'], { visits: APPROVED });
+    assert.match(replies[0], /^Your visit requests:\nVMS-2026-563706, host Waqas Naveed/);
+  });
+
+  test('"another visit request" starts a clean booking without the reminder', () => {
+    const { replies, state } = chat(['Yes i need another visit request'], { visits: APPROVED });
+    assert.match(replies[0], /^Welcome/);
+    assert.doesNotMatch(replies[0], /You already have/);
+    assert.equal(state.stage, 'collecting');
+  });
+
+  test('reschedule explains cancel + rebook', () => {
+    const { replies } = chat(['I want to reschedule my visit'], { visits: APPROVED });
+    assert.match(replies[0], /send "cancel"/);
   });
 });
 

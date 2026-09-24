@@ -38,10 +38,11 @@ export async function loadVisitorVisits(phone, limit = 5) {
   const rows = await Visit.listByVisitorPhone(phone, limit).catch(() => []);
   return (rows || []).map((v) => ({
     ref: v.ref_number,
+    hostId: v.host_id,
     host: v.host_name,
     department: v.host_department && v.host_department !== '—' ? v.host_department : '',
     date: formatDate(v.visit_date),
-    time: v.visit_time,
+    time: String(v.visit_time || '').slice(0, 5),
     purpose: v.purpose,
     status: v.status,
   }));
@@ -122,7 +123,8 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
     `Reply only in ${language}. If ${language} is Setswana, write natural, correct Setswana.`,
     'You have read the full chat history with this visitor (the earlier messages below). Use it to understand what they mean and never ask again for something already answered there.',
     'Answer the visitor’s latest message directly, warmly, and professionally, in one to three short sentences. Plain text only: no markdown, no asterisks, no bullet points.',
-    'Facts about their own visit requests come ONLY from "Visitor’s visit requests" below — it is live from the database. Quote the reference, host, date, time, and status exactly. pending = waiting for the host to approve; approved = approved, the QR pass was sent on WhatsApp; rejected = declined by the host; used = already checked in.',
+    'Facts about their own visit requests come ONLY from "Visitor’s visit requests" below — it is live from the database. Quote the reference, host, date, time, and status exactly. pending = waiting for the host to approve; approved = approved, the QR pass was sent on WhatsApp; rejected = declined by the host; cancelled = cancelled by the visitor; used = already checked in.',
+    'Visitors can cancel a visit by sending "cancel", check their visits by sending "status", and see a host’s free times by asking e.g. "free slots for Hamza tomorrow". Each visit takes a 30-minute slot and visitors are received during office hours.',
     'When a request is pending, confirm it was sent to the host and that the visitor will be notified in this chat once the host approves or declines. Do not mention portals or internal systems.',
     'Never invent a request, reference, host, date, time, status, policy, or price. If you do not know, say so and suggest asking at reception.',
     'You cannot create, change, cancel, approve, or reject a booking yourself. To make a new booking the visitor just sends their details; to change one they send "new booking".',

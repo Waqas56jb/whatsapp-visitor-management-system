@@ -66,8 +66,39 @@ export function isNewBooking(text) {
   );
 }
 
+// "cancel", "cancel it", "please cancel my visit VMS-2026-000123", "khansela ketelo ya me".
 export function isCancel(text) {
-  return /^(cancel|cancel it|cancel booking|cancel my booking|stop|khansela|emisa|emisa kopo)[.!]*$/i.test(String(text || '').trim());
+  const value = String(text || '').trim().toLowerCase();
+  if (/\b(don'?t|do not|not|never)\s+cancel\b/.test(value)) return false;
+  if (/^(stop|emisa|emisa kopo)[.!]*$/.test(value)) return true;
+  return /\b(cancel+|cancell?ation|khansela|phimola ketelo)\b/.test(value) && value.split(/\s+/).length <= 12;
+}
+
+export function isStatusRequest(text) {
+  const value = String(text || '').trim().toLowerCase();
+  return (
+    /^(status|check status|my status|booking status|visit status|request status|maemo)[?.!]*$/.test(value) ||
+    /\b(check|show|see|view|list|what are|what is)\b.{0,20}\b(my|the)\s+(bookings?|visits?|requests?|appointments?|status)\b/.test(value) ||
+    /\b(status of my|my (bookings|visits|requests|appointments))\b/.test(value) ||
+    /\b(maemo a kopo|dikopo tsa me|diketelo tsa me)\b/.test(value)
+  );
+}
+
+export function isSlotsQuery(text) {
+  const value = String(text || '').trim().toLowerCase();
+  return (
+    /\b(free|available|availability|open|empty|booked|taken)\s+(slots?|times?|timings?)\b/.test(value) ||
+    /\bslots?\b/.test(value) ||
+    /\bwhen is\b.+\b(free|available)\b/.test(value) ||
+    /\b(what|which) times?\b.+\b(free|available|open)\b/.test(value) ||
+    /\bdinako\b.+\b(gololesegileng|bulegileng)\b/.test(value)
+  );
+}
+
+export function isReschedule(text) {
+  return /\b(reschedule|re-schedule|postpone|change (my|the) (visit|booking|appointment|time|date)|move (my|the) (visit|booking|appointment))\b/i.test(
+    String(text || '')
+  );
 }
 
 export function isYes(text) {

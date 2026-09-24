@@ -61,6 +61,7 @@ const STATUS_LABEL = {
   blocked: 'Blocked',
   disabled: 'Disabled',
   inactive: 'Inactive',
+  cancelled: 'Cancelled',
 };
 
 const ROLE_OPTIONS = ['Host', 'Security', 'Client Admin'];
@@ -735,6 +736,7 @@ export default function App() {
                         <option value="approved">{t('Approved')}</option>
                         <option value="rejected">{t('Rejected')}</option>
                         <option value="used">{t('Checked in')}</option>
+                        <option value="cancelled">{t('Cancelled')}</option>
                       </select>
                       <button className="btn btn-violet btn-sm" onClick={() => setModal('visitModal')}>
                         <Plus size={14} strokeWidth={2.4} /> {t('New request')}

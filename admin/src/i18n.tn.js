@@ -60,6 +60,8 @@ export const TN = {
   Approved: 'E amogetswe',
   Rejected: 'E ganetswe',
   'Checked in': 'O tsene',
+  Cancelled: 'E khanseletswe',
+  'Cancelled visit': 'Ketelo e khanseletswe',
   Blocked: 'E thibetswe',
   Active: 'E a dira',
   Visitor: 'Moeti',

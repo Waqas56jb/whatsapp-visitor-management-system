@@ -445,3 +445,5 @@ tbody tr:hover{background:#FBFAFF;}
   .stat-card .top{grid-row:span 2; margin:0;}
   .stat-card b{font-size:22px; line-height:1.1;}
 }
+
+.badge.cancelled{background:#F1EEFA; color:#6F6796;}

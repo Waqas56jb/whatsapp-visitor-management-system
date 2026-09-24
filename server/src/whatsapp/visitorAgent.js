@@ -1,11 +1,12 @@
 // I/O wrapper around the pure booking engine: loads state, performs actions, persists, replies.
 import { ConversationState, Settings, Visit } from '../models/index.js';
 import { listActiveHosts } from '../services/hosts.js';
-import { createPendingVisit } from '../services/visits.js';
-import { todayStamp } from '../utils/dateParse.js';
+import { cancelVisitByVisitor, createPendingVisit } from '../services/visits.js';
+import { nowTime, todayStamp } from '../utils/dateParse.js';
 import { formatDate } from '../utils/mappers.js';
 import { normalizePhone } from '../utils/phone.js';
-import { afterBooking, currentPrompt, loadState, runTurn } from './bookingEngine.js';
+import { conflictAt } from './availability.js';
+import { afterBooking, afterCancel, currentPrompt, loadState, runTurn } from './bookingEngine.js';
 import { answerVisitor, loadVisitorVisits } from './faq.js';
 import { formatVisitDate, formatVisitTime, statusLabel, t } from './messages.js';
 import { sendText } from './sendMessage.js';
@@ -14,8 +15,23 @@ function joinReplies(...parts) {
   return parts.filter(Boolean).join('\n\n');
 }
 
+// Every host's open visits from today on, used for the 30-minute slot rule.
+async function loadOpenBookings(today) {
+  const rows = await Visit.listOpenFrom(today).catch(() => []);
+  return (rows || []).map((r) => ({
+    ref: r.ref_number,
+    hostId: r.host_id,
+    date: formatDate(r.visit_date),
+    time: String(r.visit_time || '').slice(0, 5),
+    status: r.status,
+  }));
+}
+
 async function bookVisit(state, from) {
   const { slots, lang } = state;
+  // Re-check the slot right before saving: another visitor may have taken it since confirmation.
+  const fresh = await loadOpenBookings(todayStamp());
+  if (conflictAt(fresh, slots.hostId, slots.date, slots.time)) return { ok: false, reason: 'slot_taken', bookings: fresh };
   try {
     const visit = await createPendingVisit({
       name: slots.name,
@@ -91,22 +107,34 @@ async function saveConversation(from, state, accountId) {
 export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = null }) {
   const accountId = ctx.accountId || 0;
   const sendOpts = { accountId: accountId || null, replyJid: replyJid || ctx.replyJid || null };
-  const [previous, hosts, settings] = await Promise.all([
+  const today = todayStamp();
+  const now = nowTime();
+  const [previous, hosts, settings, visits, bookings] = await Promise.all([
     loadConversation(from),
     listActiveHosts(),
     Settings.get().catch(() => null),
+    loadVisitorVisits(from, 5),
+    loadOpenBookings(today),
   ]);
   const orgName = settings?.org_name || 'Botho Innovations';
-  const turn = runTurn(previous, text, { hosts, today: todayStamp(), orgName });
+  const turn = runTurn(previous, text, { hosts, today, now, orgName, visits, bookings });
 
   let state = turn.state;
   let reply = turn.reply;
   for (const action of turn.actions) {
     if (action.type === 'book') {
       const outcome = await bookVisit(state, from);
-      const booked = afterBooking(state, outcome, { hosts });
+      const booked = afterBooking(state, outcome, { hosts, bookings: outcome.bookings || bookings, today, now });
       state = booked.state;
       reply = joinReplies(reply, booked.reply);
+    } else if (action.type === 'cancel') {
+      const outcome = await cancelVisitByVisitor({ ref: action.ref, visitorPhone: from }).catch((err) => {
+        console.error('Visit cancel failed:', err.message);
+        return { ok: false };
+      });
+      const cancelled = afterCancel(state, outcome);
+      state = cancelled.state;
+      reply = joinReplies(reply, cancelled.reply);
     } else if (action.type === 'status') {
       reply = joinReplies(reply, await statusReply(action.ref, from, state.lang), action.followUp);
     } else if (action.type === 'faq') {
@@ -124,22 +152,6 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
   }
   if (!reply) reply = currentPrompt(state) || t(state.lang, 'welcome');
 
-  // A returning visitor who greets again is reminded of their open request.
-  if (reply === t(state.lang, 'welcome')) {
-    const open = (await loadVisitorVisits(from, 3)).find(
-      (v) => ['pending', 'approved'].includes(v.status) && v.date >= todayStamp()
-    );
-    if (open) {
-      const summary = t(state.lang, 'visit.summary', {
-        ref: open.ref,
-        host: open.host,
-        date: formatVisitDate(open.date, state.lang),
-        time: formatVisitTime(open.time, state.lang),
-        status: statusLabel(open.status, state.lang),
-      });
-      reply = joinReplies(reply, t(state.lang, 'welcome.existing', { summary }));
-    }
-  }
 
   state.history = [
     ...(state.history || []),

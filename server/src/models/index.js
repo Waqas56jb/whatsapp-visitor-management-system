@@ -221,6 +221,14 @@ export const Visit = {
        WHERE id = $1 RETURNING *`,
       [id, status, qr_token, pin]
     ),
+  setStatus: (id, status) => queryOne(`UPDATE ${T.visits} SET status = $2 WHERE id = $1 RETURNING *`, [id, status]),
+  // Visits that hold a host's time slot (pending or approved) from a date onwards.
+  listOpenFrom: (date) =>
+    query(
+      `SELECT ref_number, host_id, visit_date, visit_time, status FROM ${T.visits}
+       WHERE status IN ('pending', 'approved') AND visit_date >= $1`,
+      [date]
+    ),
   markUsed: (id) =>
     queryOne(
       `UPDATE ${T.visits} SET used_at = NOW(), status = CASE WHEN status = 'approved' THEN 'used' ELSE status END

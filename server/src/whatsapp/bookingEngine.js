@@ -1,6 +1,8 @@
 // Deterministic WhatsApp booking state machine. Pure: no DB, no network, no LLM.
 // Slots are the only source of truth; the LLM is only ever used to answer FAQs (see faq.js).
-import { todayStamp } from '../utils/dateParse.js';
+import dayjs from 'dayjs';
+import { extractDate, todayStamp } from '../utils/dateParse.js';
+import { conflictAt, freeSlots, hostBookings, nearestFree, officeHours, timeProblem, toMinutes, SLOT_MINUTES } from './availability.js';
 import { departmentOf, matchHosts, pickOption } from './hostMatch.js';
 import {
   detectLanguage,
@@ -9,12 +11,15 @@ import {
   isNewBooking,
   isNo,
   isOffTopic,
+  isReschedule,
+  isSlotsQuery,
+  isStatusRequest,
   isYes,
   looksLikeQuestion,
   mentionsDecision,
   normalizeLang,
 } from './lang.js';
-import { hostOptionLines, summaryText, t } from './messages.js';
+import { formatVisitDate, formatVisitTime, hostOptionLines, statusLabel, summaryText, t } from './messages.js';
 import { answerForField, emptySlots, extractFields, isBookingWordsOnly, missingField } from './slotExtract.js';
 
 const STATE_VERSION = 2;
@@ -33,10 +38,15 @@ export function freshState(prev = {}) {
     asked: null,
     retries: 0,
     hostOptions: [],
+    cancelRef: null,
+    cancelOptions: [],
     lastRef: prev.lastRef || null,
+    notedKey: prev.notedKey || null,
     history: Array.isArray(prev.history) ? prev.history.slice(-20) : [],
   };
 }
+
+const STAGES = ['idle', 'collecting', 'choose_host', 'confirm', 'confirm_cancel', 'choose_cancel'];
 
 // Accepts whatever is stored in the DB. Anything from the old engine starts a clean booking.
 export function loadState(data) {
@@ -45,12 +55,77 @@ export function loadState(data) {
   }
   return {
     ...freshState(data),
-    stage: ['idle', 'collecting', 'choose_host', 'confirm'].includes(data.stage) ? data.stage : 'idle',
+    stage: STAGES.includes(data.stage) ? data.stage : 'idle',
     slots: { ...emptySlots(), ...(data.slots || {}) },
     asked: data.asked || null,
     retries: Number(data.retries) || 0,
     hostOptions: Array.isArray(data.hostOptions) ? data.hostOptions : [],
+    cancelRef: data.cancelRef || null,
+    cancelOptions: Array.isArray(data.cancelOptions) ? data.cancelOptions : [],
   };
+}
+
+// The visitor's upcoming visits that still hold a slot (can be cancelled or reminded about).
+function openVisits(ctx) {
+  return (ctx.visits || []).filter((v) => ['pending', 'approved'].includes(v.status) && v.date >= ctx.today);
+}
+
+function visitSummary(v, lang) {
+  return t(lang, 'visit.summary', {
+    ref: v.ref,
+    host: v.host,
+    date: formatVisitDate(v.date, lang),
+    time: formatVisitTime(v.time, lang),
+    status: statusLabel(v.status, lang),
+  });
+}
+
+function slotList(times, lang, emptyKey) {
+  return times.length ? times.join(', ') : t(lang, emptyKey);
+}
+
+// Checks the chosen time against office hours, the clock, and the host's other visits.
+// Clears the time and returns a reply when it cannot be booked; returns null when it is fine.
+function slotProblem(state, ctx) {
+  const { slots } = state;
+  if (!slots.date || !slots.time) return null;
+  const hours = ctx.hours || officeHours();
+  const problem = timeProblem({ date: slots.date, time: slots.time, today: ctx.today, now: ctx.now, hours });
+  if (problem) {
+    slots.time = '';
+    state.asked = 'time';
+    const msg = problem === 'past' ? t(state.lang, 'time.past') : t(state.lang, 'time.closed', hours);
+    return join(msg, slots.hostId ? freeHint(state, ctx) : '');
+  }
+  if (!slots.hostId) return null;
+  const clash = conflictAt(ctx.bookings, slots.hostId, slots.date, slots.time);
+  if (!clash) return null;
+  const free = freeSlots({ bookings: ctx.bookings, hostId: slots.hostId, date: slots.date, today: ctx.today, now: ctx.now, hours });
+  const takenAt = slots.time;
+  slots.time = '';
+  state.asked = 'time';
+  if (!free.length) {
+    const date = slots.date;
+    slots.date = '';
+    state.asked = 'date';
+    return t(state.lang, 'slot.fullDay', { host: slots.hostName, date: formatVisitDate(date, state.lang) });
+  }
+  return t(state.lang, 'slot.taken', {
+    host: slots.hostName,
+    time: clash.time,
+    date: formatVisitDate(slots.date, state.lang),
+    free: nearestFree(free, takenAt, 6).join(', '),
+  });
+}
+
+function freeHint(state, ctx) {
+  const { slots } = state;
+  if (!slots.hostId || !slots.date) return '';
+  // Only worth listing when the host already has visits that day; an empty day is simply "any time".
+  if (!hostBookings(ctx.bookings, slots.hostId, slots.date).length) return '';
+  const free = freeSlots({ bookings: ctx.bookings, hostId: slots.hostId, date: slots.date, today: ctx.today, now: ctx.now, hours: ctx.hours });
+  if (!free.length) return '';
+  return t(state.lang, 'slot.hint', { host: slots.hostName, date: formatVisitDate(slots.date, state.lang), free: free.join(', ') });
 }
 
 function compactHost(h) {
@@ -115,9 +190,24 @@ function resolveHost(state, hosts, query, { explicit }) {
 }
 
 // Moves to the next missing field, or to confirmation once everything is filled.
-function advance(state) {
+// Time slots are validated here, so every path (one-liner, step by step, corrections) is covered.
+function advance(state, ctx) {
   state.stage = 'collecting';
+  const problem = slotProblem(state, ctx);
+  if (problem) return problem;
   const next = missingField(state.slots);
+  if (next === 'time' && state.slots.hostId && state.slots.date) {
+    const free = freeSlots({ bookings: ctx.bookings, hostId: state.slots.hostId, date: state.slots.date, today: ctx.today, now: ctx.now, hours: ctx.hours });
+    if (!free.length) {
+      const date = state.slots.date;
+      state.slots.date = '';
+      state.asked = 'date';
+      return t(state.lang, 'slot.fullDay', { host: state.slots.hostName, date: formatVisitDate(date, state.lang) });
+    }
+    state.asked = 'time';
+    state.retries = 0;
+    return join(t(state.lang, 'ask.time'), freeHint(state, ctx));
+  }
   if (next) {
     state.asked = next;
     state.retries = 0;
@@ -231,7 +321,7 @@ function handleCollect(state, raw, ctx) {
   }
 
   state.welcomed = true;
-  return { reply: advance(state) };
+  return { reply: advance(state, ctx) };
 }
 
 function handleChooseHost(state, raw, ctx) {
@@ -242,7 +332,7 @@ function handleChooseHost(state, raw, ctx) {
   }
   if (picked.length === 1) {
     setHost(state, picked[0]);
-    return { reply: advance(state) };
+    return { reply: advance(state, ctx) };
   }
   if (picked.length > 1) {
     state.hostOptions = picked.slice(0, MAX_OPTIONS).map(compactHost);
@@ -307,20 +397,129 @@ function handleConfirm(state, raw, ctx) {
     }
     changed = true;
   }
-  if (changed) return { reply: advance(state) };
+  if (changed) return { reply: advance(state, ctx) };
   if (looksLikeQuestion(raw)) {
     return { reply: '', actions: [{ type: 'faq', question: raw, followUp: t(state.lang, 'confirm.reminder') }] };
   }
   return { reply: t(state.lang, 'confirm.reminder') };
 }
 
+function draftStarted(state) {
+  return ['collecting', 'choose_host', 'confirm'].includes(state.stage) && Object.values(state.slots).some(Boolean);
+}
+
+function resetToIdle(state) {
+  Object.assign(state, freshState(state), { lang: state.lang, welcomed: true, notedKey: state.notedKey });
+}
+
+// "cancel": stops a booking still being collected, otherwise cancels one of the visitor's real visits.
+function handleCancelIntent(state, raw, ctx) {
+  const ref = raw.match(REF_RE)?.[0]?.toUpperCase() || null;
+  if (!ref && draftStarted(state)) {
+    resetToIdle(state);
+    return { reply: t(state.lang, 'cancel.draft') };
+  }
+  const open = openVisits(ctx);
+  const targets = ref ? open.filter((v) => v.ref.toUpperCase() === ref) : open;
+  resetToIdle(state);
+  if (!targets.length) return { reply: t(state.lang, 'cancel.none') };
+  if (targets.length === 1) {
+    state.stage = 'confirm_cancel';
+    state.cancelRef = targets[0].ref;
+    return { reply: t(state.lang, 'cancel.confirm', { summary: visitSummary(targets[0], state.lang) }) };
+  }
+  state.stage = 'choose_cancel';
+  state.cancelOptions = targets.map((v) => v.ref);
+  const list = targets.map((v, i) => `${i + 1}. ${visitSummary(v, state.lang)}`).join('\n');
+  return { reply: t(state.lang, 'cancel.choose', { list }) };
+}
+
+function handleConfirmCancel(state, raw, ctx) {
+  const visit = openVisits(ctx).find((v) => v.ref === state.cancelRef);
+  if (!visit) {
+    resetToIdle(state);
+    return { reply: t(state.lang, 'cancel.none') };
+  }
+  if (isYes(raw)) return { reply: '', actions: [{ type: 'cancel', ref: visit.ref }] };
+  if (isNo(raw)) {
+    resetToIdle(state);
+    return { reply: t(state.lang, 'cancel.kept', { ref: visit.ref }) };
+  }
+  return { reply: t(state.lang, 'cancel.confirm', { summary: visitSummary(visit, state.lang) }) };
+}
+
+function handleChooseCancel(state, raw, ctx) {
+  if (isNo(raw)) {
+    resetToIdle(state);
+    return { reply: t(state.lang, 'cancel.keptAll') };
+  }
+  const open = openVisits(ctx).filter((v) => state.cancelOptions.includes(v.ref));
+  const num = raw.match(/^(?:no\.?|number|nomoro)?\s*(\d{1,2})[.)]?$/i);
+  const ref = raw.match(REF_RE)?.[0]?.toUpperCase();
+  const visit = num ? open.find((v) => v.ref === state.cancelOptions[Number(num[1]) - 1]) : open.find((v) => v.ref.toUpperCase() === ref);
+  if (!visit) return { reply: t(state.lang, 'cancel.pick') };
+  state.stage = 'confirm_cancel';
+  state.cancelRef = visit.ref;
+  state.cancelOptions = [];
+  return { reply: t(state.lang, 'cancel.confirm', { summary: visitSummary(visit, state.lang) }) };
+}
+
+function handleStatus(state, ctx) {
+  const visits = (ctx.visits || []).slice(0, 5);
+  const reply = visits.length
+    ? t(state.lang, 'status.list', { list: visits.map((v) => visitSummary(v, state.lang)).join('\n') })
+    : t(state.lang, 'status.none');
+  return { reply: join(reply, draftStarted(state) ? currentPrompt(state) : '') };
+}
+
+// "free slots for Hamza tomorrow": booked and free 30-minute slots for one host on one day.
+function handleSlots(state, raw, ctx) {
+  const hours = ctx.hours || officeHours();
+  const named = matchHosts(raw, activeHosts(ctx.hosts));
+  const host =
+    named.length === 1
+      ? named[0]
+      : state.slots.hostId
+        ? { id: state.slots.hostId, name: state.slots.hostName }
+        : null;
+  if (!host) return { reply: join(t(state.lang, 'slots.needHost'), draftStarted(state) ? currentPrompt(state) : '') };
+  const asked = extractDate(raw, ctx.today);
+  const lastStart = toMinutes(hours.close) - SLOT_MINUTES;
+  const fallback = ctx.now && toMinutes(ctx.now) >= lastStart ? dayjs(ctx.today).add(1, 'day').format('YYYY-MM-DD') : ctx.today;
+  const date = asked && asked !== 'past' ? asked : state.slots.date || fallback;
+  const booked = hostBookings(ctx.bookings, host.id, date).map((b) => b.time);
+  const free = freeSlots({ bookings: ctx.bookings, hostId: host.id, date, today: ctx.today, now: ctx.now, hours });
+  const reply = t(state.lang, 'slots.report', {
+    host: host.name,
+    date: formatVisitDate(date, state.lang),
+    booked: slotList(booked, state.lang, 'slots.noneBooked'),
+    free: slotList(free, state.lang, 'slots.noneFree'),
+  });
+  return { reply: join(reply, draftStarted(state) ? currentPrompt(state) : '') };
+}
+
+// Reminds a returning visitor of their open request once per request/status, not on every greeting.
+function existingNote(state, ctx) {
+  const open = openVisits(ctx)[0];
+  if (!open) return '';
+  const key = `${open.ref}:${open.status}`;
+  if (state.notedKey === key) return '';
+  state.notedKey = key;
+  return t(state.lang, 'welcome.existing', { summary: visitSummary(open, state.lang) });
+}
+
 // Runs one visitor message through the booking flow.
-// Returns { state, reply, actions } where actions are side effects the caller performs (book, status, faq).
-export function runTurn(prevState, input, { hosts = [], today = todayStamp(), orgName = 'Botho Innovations' } = {}) {
+// Returns { state, reply, actions } where actions are side effects the caller performs (book, cancel, status, faq).
+// ctx.visits = the visitor's own recent visits; ctx.bookings = every host's open visits (for 30-minute slots).
+export function runTurn(
+  prevState,
+  input,
+  { hosts = [], today = todayStamp(), now = null, orgName = 'Botho Innovations', visits = [], bookings = [], hours = officeHours() } = {}
+) {
   const state = JSON.parse(JSON.stringify(loadState(prevState)));
   const raw = String(input || '').trim();
   state.lang = normalizeLang(detectLanguage(raw) || state.lang);
-  const ctx = { hosts, today, orgName };
+  const ctx = { hosts, today, now, orgName, visits, bookings, hours };
   const result = (out) => ({ state, reply: out.reply || '', actions: out.actions || [] });
 
   if (!raw) {
@@ -331,11 +530,17 @@ export function runTurn(prevState, input, { hosts = [], today = todayStamp(), or
   if (isGreetingOnly(raw) || isNewBooking(raw)) {
     const next = freshState(state);
     Object.assign(state, next, { stage: 'collecting', welcomed: true, lang: state.lang, asked: 'name' });
-    return result({ reply: t(state.lang, 'welcome') });
+    const note = isGreetingOnly(raw) ? existingNote(state, ctx) : '';
+    return result({ reply: join(t(state.lang, 'welcome'), note) });
   }
-  if (isCancel(raw)) {
-    Object.assign(state, freshState(state), { lang: state.lang, welcomed: true });
-    return result({ reply: t(state.lang, 'cancelled') });
+
+  if (state.stage === 'confirm_cancel' && !isCancel(raw)) return result(handleConfirmCancel(state, raw, ctx));
+  if (state.stage === 'choose_cancel' && !isCancel(raw)) return result(handleChooseCancel(state, raw, ctx));
+  if (isCancel(raw)) return result(handleCancelIntent(state, raw, ctx));
+  if (isStatusRequest(raw)) return result(handleStatus(state, ctx));
+  if (isSlotsQuery(raw)) return result(handleSlots(state, raw, ctx));
+  if (isReschedule(raw) && state.stage !== 'confirm') {
+    return result({ reply: join(t(state.lang, 'reschedule.help'), draftStarted(state) ? currentPrompt(state) : '') });
   }
   if (mentionsDecision(raw)) {
     return result({ reply: join(t(state.lang, 'approveDenied'), currentPrompt(state)) });
@@ -359,9 +564,22 @@ export function runTurn(prevState, input, { hosts = [], today = todayStamp(), or
   return result(handleCollect(state, raw, ctx));
 }
 
-// Applies the outcome of a booking attempt made by the caller.
-export function afterBooking(prevState, outcome, { hosts = [] } = {}) {
+// Applies the outcome of a cancellation made by the caller.
+export function afterCancel(prevState, outcome) {
   const state = JSON.parse(JSON.stringify(loadState(prevState)));
+  resetToIdle(state);
+  if (outcome.ok) return { state, reply: t(state.lang, 'cancel.done', { ref: outcome.ref, host: outcome.hostName }) };
+  return { state, reply: t(state.lang, 'cancel.failed') };
+}
+
+// Applies the outcome of a booking attempt made by the caller.
+export function afterBooking(prevState, outcome, { hosts = [], bookings = [], today = todayStamp(), now = null, hours = officeHours() } = {}) {
+  const state = JSON.parse(JSON.stringify(loadState(prevState)));
+  if (outcome.reason === 'slot_taken') {
+    // Someone else took the slot between confirmation and submission.
+    const reply = advance(state, { hosts, bookings, today, now, hours });
+    return { state, reply };
+  }
   if (outcome.ok) {
     Object.assign(state, freshState(state), { welcomed: true, lastRef: outcome.ref, lang: state.lang });
     return {

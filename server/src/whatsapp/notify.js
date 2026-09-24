@@ -75,6 +75,28 @@ export async function notifyHostNewVisit(visit) {
   return { sent, reason: sent ? null : 'send_failed' };
 }
 
+export async function notifyHostCancelled(visit) {
+  const host = visit.host_id ? await Host.findById(visit.host_id) : null;
+  const phone = normalizePhone(host?.phone || visit.host_phone);
+  const visitorPhone = normalizePhone(visitorPhoneOf(visit));
+  if (!phone || host?.status === 'blocked' || (visitorPhone && phone === visitorPhone)) return { sent: false };
+  const sent = await sendTextToPhone(
+    phone,
+    [
+      `Hello ${String(visit.host_name || '').split(' ')[0]}, a visit has been cancelled by the visitor.`,
+      '',
+      `Visitor: ${visit.visitor_name}`,
+      `Company: ${visit.visitor_company || '—'}`,
+      `Date: ${formatVisitDate(formatDate(visit.visit_date), 'en')}`,
+      `Time: ${formatVisitTime(visit.visit_time, 'en')}`,
+      `Reference: ${visit.ref_number}`,
+      '',
+      'No action is needed. That time slot is free again.',
+    ].join('\n')
+  );
+  return { sent };
+}
+
 export async function notifyVisitorSubmitted(visit) {
   const phone = visitorPhoneOf(visit);
   if (!phone) return;

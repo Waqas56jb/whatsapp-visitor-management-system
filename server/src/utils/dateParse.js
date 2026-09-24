@@ -39,6 +39,10 @@ export function todayStamp(now = new Date()) {
   return dayjs(now).tz(ORG_TIMEZONE).format('YYYY-MM-DD');
 }
 
+export function nowTime(now = new Date()) {
+  return dayjs(now).tz(ORG_TIMEZONE).format('HH:mm');
+}
+
 function normalize(text) {
   return String(text || '')
     .toLowerCase()

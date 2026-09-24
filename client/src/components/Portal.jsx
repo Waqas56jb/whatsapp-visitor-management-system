@@ -46,7 +46,7 @@ const VIEWS = [
   { id: 'profile', icon: Settings, label: 'Profile', sub: 'Your account details' },
 ];
 
-const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected', used: 'Checked in', blocked: 'Blocked' };
+const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected', used: 'Checked in', blocked: 'Blocked', cancelled: 'Cancelled' };
 
 function Badge({ status }) {
   const { t } = useI18n();

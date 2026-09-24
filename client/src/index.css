@@ -654,3 +654,5 @@
     .ap-stat-card .top{grid-row:span 2; margin:0;}
     .ap-stat-card b{font-size:22px; line-height:1.1;}
   }
+
+  .ap-badge.cancelled{background:#F1EEFA; color:#6F6796;}
