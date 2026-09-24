@@ -73,12 +73,17 @@ export async function createPendingVisit({
   });
 
   const full = await Visit.findById(created.id);
+  let hostNotify = { sent: false, reason: 'skipped' };
   if (notify && notifyVisitor) {
     await notifyVisitorSubmitted(full).catch((err) => console.error('Visitor submit notify failed:', err.message));
   }
   if (notify && notifyHost) {
-    await notifyHostNewVisit(full).catch((err) => console.error('Host notify failed:', err.message));
+    hostNotify = await notifyHostNewVisit(full).catch((err) => {
+      console.error('Host notify failed:', err.message);
+      return { sent: false, reason: err.message };
+    });
   }
+  full.hostNotify = hostNotify;
   if (phone) {
     await ConversationLog.linkVisit(phone, created.id).catch((err) =>
       console.error('Conversation log link failed:', err.message)

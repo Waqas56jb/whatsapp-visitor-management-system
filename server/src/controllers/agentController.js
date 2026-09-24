@@ -63,17 +63,14 @@ function summarizeVisit(v) {
 }
 
 async function runTool(name, args, req) {
-  const hostId = req.user?.hostId;
-  if (!hostId) return { error: 'This account is not linked to a host.' };
-
   if (name === 'list_visits') {
     const status = args.status && args.status !== 'all' ? args.status : undefined;
-    const rows = (await Visit.list({ hostId, status })).map(mapVisit).map(summarizeVisit);
+    const rows = (await Visit.list({ status })).map(mapVisit).map(summarizeVisit);
     return { count: rows.length, visits: rows.slice(0, 30) };
   }
 
   if (name === 'decide_visit') {
-    const visits = (await Visit.list({ hostId })).map(mapVisit);
+    const visits = (await Visit.list()).map(mapVisit);
     const ref = String(args.ref || '').trim();
     const visitor = String(args.visitor || '').trim().toLowerCase();
     const match = visits.find((v) => {
@@ -87,7 +84,6 @@ async function runTool(name, args, req) {
       visitId: match.id,
       decision: args.decision === 'rejected' ? 'rejected' : 'approved',
       actor: req.user?.name || 'Host',
-      actorHostId: hostId,
     });
     const visit = mapVisit(result.visit);
     return {
@@ -101,7 +97,7 @@ async function runTool(name, args, req) {
   }
 
   if (name === 'list_conversations') {
-    const rows = await ConversationLog.listThreads(hostId);
+    const rows = await ConversationLog.listThreads();
     return {
       count: rows.length,
       threads: rows.slice(0, 20).map((row) => ({
@@ -132,10 +128,6 @@ export async function hostAgentChat(req, res) {
       error: 'OpenAI is not configured. Add OPENAI_API_KEY to the server .env and restart.',
     });
   }
-  if (!req.user?.hostId) {
-    return res.status(400).json({ error: 'This account is not linked to a host.' });
-  }
-
   const message = String(req.body.message || '').trim();
   if (!message) return res.status(400).json({ error: 'Message is required' });
 

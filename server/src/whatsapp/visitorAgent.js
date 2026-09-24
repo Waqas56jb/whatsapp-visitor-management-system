@@ -1,8 +1,7 @@
 import OpenAI from 'openai';
 import { FIRST_TIME_WELCOME, KNOWLEDGE_DEFAULTS } from '../config/knowledgeDefaults.js';
-import { ConversationState, Knowledge, Settings, Visit } from '../models/index.js';
+import { ConversationState, Host, Knowledge, Settings, Visit } from '../models/index.js';
 import { formatDateNice } from '../utils/mappers.js';
-import { normalizePhone } from '../utils/phone.js';
 import { listActiveHosts, resolveHostForNotify } from '../services/hosts.js';
 import { createPendingVisit } from '../services/visits.js';
 import { sendText } from './sendMessage.js';
@@ -130,7 +129,7 @@ async function buildKnowledgePrompt() {
 
 async function bookFromSlots(slots, ctx) {
   const resolved = slots.hostId
-    ? { host: { id: slots.hostId, name: slots.hostName, department: slots.hostDept } }
+    ? { host: await Host.findById(slots.hostId) }
     : await resolveHostForNotify(slots.hostName);
   if (!resolved.host) return { error: resolved.error || 'Host not found', matches: resolved.matches || [] };
   const visit = await createPendingVisit({
@@ -147,12 +146,14 @@ async function bookFromSlots(slots, ctx) {
     notifyVisitor: false,
     notifyHost: true,
   });
-  const hostPhone = normalizePhone(resolved.host.phone);
-  const visitorPhone = normalizePhone(ctx.from);
-  const hostNote =
-    hostPhone && hostPhone !== visitorPhone
-      ? `${visit.host_name} has been notified on WhatsApp. You will receive a message here once they approve or reject the visit.`
-      : `${visit.host_name} will review this from the staff panel. You will receive a message here once they respond.`;
+  const notify = visit.hostNotify || {};
+  const hostNote = notify.sent
+    ? `${visit.host_name} has been notified on WhatsApp. Reply will come here after they approve or reject.`
+    : notify.reason === 'same_phone'
+      ? `${visit.host_name} will review this from the staff panel because the host number matches this chat.`
+      : notify.reason === 'no_phone'
+        ? `${visit.host_name} has no WhatsApp number saved. Staff can approve this from the client panel.`
+        : `${visit.host_name} will also see this on the client panel. WhatsApp notify could not be delivered just now.`;
   return {
     ok: true,
     ref: visit.ref_number,

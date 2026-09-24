@@ -81,11 +81,18 @@ export function isOffTopic(text) {
 
 export function extractDateFromText(text) {
   const raw = String(text || '');
-  const direct = parseFlexibleDate(raw);
-  if (direct && direct !== 'past') return direct;
-  const match = raw.match(new RegExp(`(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTHS})\\s+(20\\d{2})`, 'i'));
-  if (match) {
-    const parsed = parseFlexibleDate(`${match[1]} ${match[2]} ${match[3]}`);
+  if (raw.length <= 40) {
+    const direct = parseFlexibleDate(raw);
+    if (direct && direct !== 'past') return direct;
+  }
+  const withYear = raw.match(new RegExp(`(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTHS})\\s+(20\\d{2})`, 'i'));
+  if (withYear) {
+    const parsed = parseFlexibleDate(`${withYear[1]} ${withYear[2]} ${withYear[3]}`);
+    if (parsed && parsed !== 'past') return parsed;
+  }
+  const withoutYear = raw.match(new RegExp(`(?:on\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTHS})\\b`, 'i'));
+  if (withoutYear) {
+    const parsed = parseFlexibleDate(`${withoutYear[1]} ${withoutYear[2]}`);
     if (parsed && parsed !== 'past') return parsed;
   }
   const iso = raw.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
@@ -102,8 +109,28 @@ export function extractTimeFromText(text) {
   return null;
 }
 
-function looksLikeVisitHost(text) {
-  return /\b(visit(?:ing)?|meet(?:ing)? with|see|host|appointment with|book(?:ing)? with)\b/i.test(text);
+function extractHostMention(text) {
+  const match = String(text || '').match(
+    /\b(?:visit(?:ing)?|meet(?:ing)?(?:\s+with)?|see|host(?:\s+is)?|appointment with|book(?:ing)? with)\s+(?!on\b|at\b|the\b|a\b|an\b|to\b)([A-Za-z][A-Za-z .'-]{1,40})/i
+  );
+  return match ? match[1].replace(/\s+/g, ' ').trim() : '';
+}
+
+function matchHostFromMention(mention, hosts = []) {
+  const lower = String(mention || '').toLowerCase();
+  if (!lower) return null;
+  const scored = [];
+  for (const host of hosts) {
+    const name = String(host.name || '').toLowerCase();
+    if (!name) continue;
+    if (lower.includes(name) || name.includes(lower)) scored.push({ host, score: 10 });
+    else if (name.split(/\s+/).some((part) => part.length > 2 && lower.split(/[^a-z0-9]+/).includes(part))) {
+      scored.push({ host, score: 7 });
+    }
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored.filter((item) => item.score === scored[0]?.score).map((item) => item.host);
+  return top.length === 1 ? top[0] : null;
 }
 
 export function extractSlotsFromText(text, hosts = []) {
@@ -114,37 +141,32 @@ export function extractSlotsFromText(text, hosts = []) {
   if (date) next.date = date;
   if (time) next.time = time;
 
-  const nameMatch = raw.match(/(?:my name is|i am|i'm|im)\s+([A-Za-z][A-Za-z .'-]{1,60}?)(?:\s+i\b|\s+from\b|,|$)/i);
-  if (nameMatch) next.name = nameMatch[1].replace(/\s+/g, ' ').trim();
+  const nameFrom = raw.match(/^([A-Za-z][A-Za-z .'-]{1,50}?)\s+from\s+/i);
+  const nameSaid = raw.match(/(?:my name is|i am|i'm|im)\s+([A-Za-z][A-Za-z .'-]{1,60}?)(?:\s+i\b|\s+from\b|,|$)/i);
+  if (nameSaid) next.name = nameSaid[1].replace(/\s+/g, ' ').trim();
+  else if (nameFrom) next.name = nameFrom[1].replace(/\s+/g, ' ').trim();
 
-  const companyMatch = raw.match(/(?:from|company(?:\s+is)?)\s+([A-Za-z0-9][A-Za-z0-9 .&'-]{1,60}?)(?:\s+i\b|\s+want\b|,|$)/i);
+  const companyMatch = raw.match(
+    /(?:from|company(?:\s+is)?)\s+([A-Za-z0-9][A-Za-z0-9 .&'-]{1,60}?)(?:\s*[.,]|\s+i\b|\s+i want\b|\s+want\b|$)/i
+  );
   if (companyMatch && !/department|host|visit/i.test(companyMatch[1])) {
-    next.company = companyMatch[1].replace(/\s+/g, ' ').trim();
+    next.company = companyMatch[1].replace(/[.,]+$/, '').replace(/\s+/g, ' ').trim();
   }
 
-  const purposeMatch = raw.match(/(?:purpose(?:\s+is)?|consult(?:ing)?|for)\s+([A-Za-z][A-Za-z0-9 .,'-]{2,80})/i);
-  if (purposeMatch && !/visit|host/i.test(purposeMatch[1])) next.purpose = purposeMatch[1].trim();
-
-  const lower = raw.toLowerCase();
-  const scored = [];
-  for (const host of hosts) {
-    const name = String(host.name || '').toLowerCase();
-    const dept = String(host.department || '').toLowerCase();
-    if (name && lower.includes(name)) scored.push({ host, score: 10 });
-    else if (name.split(/\s+/).some((part) => part.length > 2 && lower.split(/[^a-z0-9]+/).includes(part))) {
-      scored.push({ host, score: 7 });
-    } else if (dept && (lower.includes(dept) || dept.split(/\s+/).some((part) => part.length > 3 && lower.includes(part)))) {
-      scored.push({ host, score: 4 });
-    }
+  const purposeMatch = raw.match(
+    /(?:purpose(?:\s+is)?|consult(?:ing)?|for)\s+([A-Za-z][A-Za-z0-9 .,'-]{2,80}?)(?=\s+(?:want|wanna|to visit|on\s+\d|at\s+\d)|[.!?]|$)/i
+  );
+  if (purposeMatch) {
+    const purpose = purposeMatch[1].replace(/[.,]+$/, '').trim();
+    if (purpose && !/^(visit|host)$/i.test(purpose)) next.purpose = purpose;
   }
-  scored.sort((a, b) => b.score - a.score);
-  if (scored[0] && (scored[0].score >= 10 || (looksLikeVisitHost(raw) && scored[0].score >= 7))) {
-    const top = scored.filter((item) => item.score === scored[0].score).map((item) => item.host);
-    if (top.length === 1) {
-      next.hostName = top[0].name;
-      next.hostId = top[0].id;
-      next.hostDept = top[0].department || '';
-    }
+
+  const mention = extractHostMention(raw);
+  const host = matchHostFromMention(mention, hosts);
+  if (host) {
+    next.hostName = host.name;
+    next.hostId = host.id;
+    next.hostDept = host.department || '';
   }
 
   return next;
@@ -172,6 +194,14 @@ export function applyPlainAnswer(slots, text, hosts = []) {
   if (missing === 'time' && !extracted.time) {
     const time = extractTimeFromText(raw);
     if (time) next.time = time;
+  }
+  if (missing === 'host' && !extracted.hostId) {
+    const mentioned = matchHostFromMention(raw, hosts);
+    if (mentioned) {
+      next.hostName = mentioned.name;
+      next.hostId = mentioned.id;
+      next.hostDept = mentioned.department || '';
+    }
   }
   return next;
 }

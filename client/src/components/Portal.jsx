@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
@@ -56,6 +56,31 @@ function Badge({ status }) {
   );
 }
 
+function playNotifySound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    const beep = (start, freq) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.12, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.2);
+    };
+    beep(now, 880);
+    beep(now + 0.16, 1175);
+    setTimeout(() => ctx.close().catch(() => {}), 600);
+  } catch {
+    /* ignore autoplay limits */
+  }
+}
+
 function EmptyState({ icon: Icon, children }) {
   return (
     <>
@@ -98,33 +123,53 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
   const [notifications, setNotifications] = useState([]);
   const [profile, setProfile] = useState(null);
   const [pageLoading, setPageLoading] = useState(false);
+  const seenPending = useRef(new Set());
+  const primed = useRef(false);
 
   const pending = visits.filter((v) => v.status === 'pending');
   const approved = visits.filter((v) => v.status === 'approved');
   const hostRec = { dept: profile?.department || currentUser?.department || '—' };
   const notifList = notifications;
 
-  async function fetchHostData() {
+  async function fetchHostData({ silent = false } = {}) {
     if (!on || !currentUser) return;
-    setPageLoading(true);
+    if (!silent) setPageLoading(true);
     try {
       const [v, n, p] = await Promise.all([
         api.get('/host/visits'),
         api.get('/host/notifications'),
         api.get('/host/profile'),
       ]);
-      setVisits(v.data || []);
+      const nextVisits = v.data || [];
+      const nextPending = nextVisits.filter((item) => item.status === 'pending');
+      const nextIds = new Set(nextPending.map((item) => item.id));
+      if (primed.current) {
+        const fresh = nextPending.filter((item) => !seenPending.current.has(item.id));
+        if (fresh.length) {
+          playNotifySound();
+          onToast(`${fresh.length} new visit request${fresh.length > 1 ? 's' : ''} waiting for approval`);
+        }
+      }
+      seenPending.current = nextIds;
+      primed.current = true;
+      setVisits(nextVisits);
       setNotifications(n.data || []);
       setProfile(p.data || null);
     } catch {
-      onToast('Could not load portal data', true);
+      if (!silent) onToast('Could not load portal data', true);
     } finally {
-      setPageLoading(false);
+      if (!silent) setPageLoading(false);
     }
   }
 
   useEffect(() => {
     fetchHostData();
+  }, [on, currentUser]);
+
+  useEffect(() => {
+    if (!on || !currentUser) return undefined;
+    const timer = setInterval(() => fetchHostData({ silent: true }), 12000);
+    return () => clearInterval(timer);
   }, [on, currentUser]);
 
   useEffect(() => {
@@ -269,9 +314,20 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                 </p>
               </div>
             </div>
-            <button className="ap-btn ap-btn-ghost ap-btn-sm ap-back-site" onClick={onBackToSite}>
-              <ArrowLeft size={14} strokeWidth={2.2} /> <span>Back to site</span>
-            </button>
+            <div className="ap-topbar-actions">
+              <button
+                className="ap-bell"
+                type="button"
+                onClick={() => switchView('notifications')}
+                aria-label={pending.length ? `${pending.length} visit notifications` : 'Notifications'}
+              >
+                <Bell size={18} strokeWidth={2.1} />
+                {pending.length ? <span className="ap-bell-dot">{pending.length}</span> : null}
+              </button>
+              <button className="ap-btn ap-btn-ghost ap-btn-sm ap-back-site" onClick={onBackToSite}>
+                <ArrowLeft size={14} strokeWidth={2.2} /> <span>Back to site</span>
+              </button>
+            </div>
           </div>
 
           <div className="ap-content">

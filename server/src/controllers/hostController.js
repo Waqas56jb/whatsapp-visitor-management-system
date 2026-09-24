@@ -8,9 +8,7 @@ function hostIdFrom(req) {
 }
 
 export async function hostDashboard(req, res) {
-  const hostId = hostIdFrom(req);
-  if (!hostId) return res.json({ pending: 0, approved: 0, total: 0, requests: [] });
-  const visits = (await Visit.list({ hostId })).map(mapVisit);
+  const visits = (await Visit.list()).map(mapVisit);
   const pending = visits.filter((v) => v.status === 'pending');
   res.json({
     pending: pending.length,
@@ -21,16 +19,12 @@ export async function hostDashboard(req, res) {
 }
 
 export async function hostVisits(req, res) {
-  const hostId = hostIdFrom(req);
-  if (!hostId) return res.json([]);
-  const visits = (await Visit.list({ hostId })).map(mapVisit);
+  const visits = (await Visit.list()).map(mapVisit);
   res.json(visits);
 }
 
 export async function hostPasses(req, res) {
-  const hostId = hostIdFrom(req);
-  if (!hostId) return res.json([]);
-  const rows = await Visit.list({ hostId, status: 'approved' });
+  const rows = await Visit.list({ status: 'approved' });
   const out = [];
   for (const row of rows) {
     const item = mapVisit(row);
@@ -45,15 +39,25 @@ export async function hostHistory(req, res) {
 }
 
 export async function hostNotifications(req, res) {
-  const hostId = hostIdFrom(req);
-  const visits = hostId ? await Visit.list({ hostId }) : [];
-  const visitorNames = visits.map((v) => v.visitor_name);
+  const visits = await Visit.list({ limit: 40 });
+  const pending = visits
+    .filter((v) => v.status === 'pending')
+    .map((v) => ({
+      id: `pending-${v.id}`,
+      time: v.created_at ? new Date(v.created_at).toLocaleString() : 'Just now',
+      actor: 'Visitor',
+      action: 'New visit request',
+      details: `${v.visitor_name} → ${v.host_name} · ${v.purpose} · ${v.ref_number}`,
+      type: 'pending',
+      visitId: v.id,
+    }));
   const actor = req.user?.name || '';
   const audit = await Audit.list(50);
-  const relevant = audit.filter(
-    (a) => visitorNames.some((n) => (a.details || '').includes(n)) || a.actor === actor
-  );
-  res.json(relevant.slice(0, 12).map(mapAudit));
+  const relevant = audit
+    .filter((a) => /visit|approved|rejected|created visit/i.test(`${a.action} ${a.details}`) || a.actor === actor)
+    .slice(0, 12)
+    .map(mapAudit);
+  res.json([...pending, ...relevant].slice(0, 20));
 }
 
 export async function hostProfile(req, res) {
@@ -67,13 +71,13 @@ export async function hostProfile(req, res) {
 }
 
 export async function hostApprove(req, res) {
-  req.user.role = 'host';
+  req.user.role = 'admin';
   const { approveVisit } = await import('./adminController.js');
   return approveVisit(req, res);
 }
 
 export async function hostReject(req, res) {
-  req.user.role = 'host';
+  req.user.role = 'admin';
   const { rejectVisit } = await import('./adminController.js');
   return rejectVisit(req, res);
 }

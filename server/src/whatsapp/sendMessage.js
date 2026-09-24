@@ -1,5 +1,5 @@
 import { ConversationLog } from '../models/index.js';
-import { phoneFromJid, toJid } from '../utils/phone.js';
+import { normalizePhone, phoneFromJid, toJid } from '../utils/phone.js';
 import { getSock } from './connection.js';
 
 async function logOutgoing(jid, text, accountId = null) {
@@ -83,4 +83,33 @@ export async function sendImage(jid, imagePathOrBuffer, caption, options = {}) {
     console.error('sendImage failed:', err.message);
     return false;
   }
+}
+
+export async function sendTextToPhone(phone, text, options = {}) {
+  const digits = normalizePhone(phone);
+  if (!digits) return false;
+  const sock = options.sock || readySock(options.accountId || null);
+  if (!sock) return false;
+  const destinations = [];
+  try {
+    if (typeof sock.onWhatsApp === 'function') {
+      const found = await sock.onWhatsApp(digits);
+      const jid = found?.[0]?.jid;
+      if (jid) destinations.push(jid);
+    }
+  } catch (err) {
+    console.warn('onWhatsApp lookup failed:', err.message);
+  }
+  destinations.push(`${digits}@s.whatsapp.net`);
+  const unique = [...new Set(destinations.filter(Boolean))];
+  for (const to of unique) {
+    try {
+      await sock.sendMessage(to, { text: String(text) });
+      await logOutgoing(to, String(text), options.accountId || null);
+      return true;
+    } catch (err) {
+      console.error(`sendTextToPhone failed to ${to}:`, err.message);
+    }
+  }
+  return false;
 }

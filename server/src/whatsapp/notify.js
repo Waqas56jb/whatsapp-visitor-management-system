@@ -2,7 +2,7 @@ import { formatDate, formatDateNice } from '../utils/mappers.js';
 import { generateQrBuffer } from '../utils/generateToken.js';
 import { Audit, Host, Settings } from '../models/index.js';
 import { normalizePhone } from '../utils/phone.js';
-import { sendImage, sendText } from './sendMessage.js';
+import { sendImage, sendText, sendTextToPhone } from './sendMessage.js';
 
 async function locationLabel() {
   if (process.env.ORG_LOCATION) return process.env.ORG_LOCATION;
@@ -18,7 +18,7 @@ export async function notifyHostNewVisit(visit) {
       action: 'Host is blocked — notification skipped',
       details: `${visit.ref_number} → ${visit.host_name}`,
     });
-    return;
+    return { sent: false, reason: 'blocked' };
   }
 
   const phone = normalizePhone(host?.phone || visit.host_phone);
@@ -32,7 +32,7 @@ export async function notifyHostNewVisit(visit) {
     return { sent: false, reason: 'same_phone' };
   }
 
-  const sent = await sendText(
+  const sent = await sendTextToPhone(
     phone,
     [
       '🔔 New visit request',
@@ -44,9 +44,9 @@ export async function notifyHostNewVisit(visit) {
       `Reference: ${visit.ref_number}`,
       '',
       `Reply APPROVE ${visit.ref_number} or REJECT ${visit.ref_number}`,
-    ].join('\n'),
-    { onlyTarget: true }
+    ].join('\n')
   );
+  if (!sent) console.error(`Host WhatsApp notify failed for ${visit.host_name} ${phone} ${visit.ref_number}`);
   return { sent, reason: sent ? null : 'send_failed' };
 }
 
