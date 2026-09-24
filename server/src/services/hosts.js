@@ -15,7 +15,17 @@ export async function matchHosts(query) {
   const exact = await Host.findByName(q);
   if (exact && exact.status === 'active') return [exact];
   const rows = await Host.search(q);
-  return rows || [];
+  if (rows?.length) return rows;
+  const tokens = q
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((part) => part.length > 2);
+  if (!tokens.length) return [];
+  const all = await Host.listActive();
+  return (all || []).filter((host) => {
+    const hay = `${host.name} ${host.department || ''}`.toLowerCase();
+    return tokens.some((token) => hay.includes(token));
+  });
 }
 
 export async function resolveHostForNotify(query) {

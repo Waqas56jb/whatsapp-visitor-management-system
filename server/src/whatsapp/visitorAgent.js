@@ -5,6 +5,18 @@ import { formatDateNice } from '../utils/mappers.js';
 import { listActiveHosts, resolveHostForNotify } from '../services/hosts.js';
 import { createPendingVisit } from '../services/visits.js';
 import { sendText } from './sendMessage.js';
+import {
+  askFor,
+  cleanReply,
+  emptySlots,
+  extractSlotsFromText,
+  isConfirm,
+  isOffTopic,
+  mergeSlots,
+  missingSlot,
+  slotsReady,
+  summaryLines,
+} from './slotExtract.js';
 
 const memory = new Map();
 
@@ -13,12 +25,10 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'lookup_host',
-      description: 'Find a company host by name or department from the saved host directory. Use this before booking. Never invent a host.',
+      description: 'Find a saved company host by name or department. Never invent a host.',
       parameters: {
         type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Host name or department' },
-        },
+        properties: { query: { type: 'string' } },
         required: ['query'],
       },
     },
@@ -27,14 +37,14 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'book_visit',
-      description: 'Create a pending visit after the visitor has given their details AND a matched host from lookup_host.',
+      description: 'Create the pending visit using the collected visitor details and matched host.',
       parameters: {
         type: 'object',
         properties: {
           name: { type: 'string' },
           company: { type: 'string' },
           purpose: { type: 'string' },
-          date: { type: 'string', description: 'YYYY-MM-DD' },
+          date: { type: 'string' },
           time: { type: 'string' },
           hostName: { type: 'string' },
           hostId: { type: 'number' },
@@ -66,20 +76,23 @@ function memoryKey(from, replyJid) {
   return String(from || replyJid || '').replace(/\D/g, '') || String(from || replyJid || '');
 }
 
-function parseHistory(prior, from, replyJid) {
-  const mem = memory.get(memoryKey(from, replyJid));
+function parseState(prior, from, replyJid) {
+  const mem = memory.get(memoryKey(from, replyJid)) || {};
   const data = prior?.collected_data || {};
-  const dbHistory = Array.isArray(data.history) ? data.history : [];
-  if (dbHistory.length) return { history: dbHistory, welcomed: Boolean(data.welcomed) || dbHistory.some((m) => m.role === 'assistant') };
-  if (mem?.history?.length) return mem;
-  return { history: [], welcomed: Boolean(data.welcomed) };
+  const history = Array.isArray(data.history) && data.history.length ? data.history : mem.history || [];
+  return {
+    history: history.slice(-20),
+    welcomed: Boolean(data.welcomed || mem.welcomed || history.some((m) => m.role === 'assistant')),
+    slots: mergeSlots(mem.slots || {}, data.slots || {}),
+    lastRef: data.lastRef || mem.lastRef || null,
+  };
 }
 
 function remember(from, replyJid, payload) {
   memory.set(memoryKey(from, replyJid), payload);
 }
 
-function clip(text, max = 3500) {
+function clip(text, max = 2500) {
   const value = String(text || '').trim();
   return value.length > max ? `${value.slice(0, max)}\n…` : value;
 }
@@ -87,12 +100,11 @@ function clip(text, max = 3500) {
 async function buildKnowledgePrompt() {
   const rows = await Knowledge.listAll().catch(() => []);
   const byKind = (kind) => rows.filter((r) => r.kind === kind);
-  const savedGreeting = String(byKind('greeting')[0]?.answer || '').trim();
-  const greeting = savedGreeting || KNOWLEDGE_DEFAULTS.greeting;
+  const greeting = String(byKind('greeting')[0]?.answer || '').trim() || KNOWLEDGE_DEFAULTS.greeting;
   const instruction =
     byKind('instruction').map((r) => r.answer).filter(Boolean).join('\n') || KNOWLEDGE_DEFAULTS.instruction;
   const rules = byKind('rule')
-    .map((r) => `- ${r.title ? `${r.title}: ` : ''}${r.answer}`)
+    .map((r) => `${r.title ? `${r.title}: ` : ''}${r.answer}`)
     .join('\n');
   const savedQa = byKind('qa').filter((r) => r.question || r.answer);
   const qaSource = savedQa.length
@@ -100,67 +112,73 @@ async function buildKnowledgePrompt() {
     : KNOWLEDGE_DEFAULTS.faqs.map((f) => ({ question: f.question, title: f.question, answer: f.answer }));
   const qa = qaSource.map((r) => `Q: ${r.question || r.title}\nA: ${r.answer}`).join('\n\n');
   const documents = [...byKind('document'), ...byKind('text'), ...byKind('website')]
-    .map((r) => {
-      const label = r.title || r.question || 'Source';
-      const link = r.kind === 'website' && r.question ? ` (${r.question})` : '';
-      return `### ${label}${link}\n${clip(r.answer)}`;
-    })
+    .map((r) => `${r.title || r.question || 'Source'}\n${clip(r.answer)}`)
     .join('\n\n');
   const settings = await Settings.get().catch(() => null);
   const org = settings?.org_name || 'Botho Innovations';
   const hosts = await listActiveHosts().catch(() => []);
   const hostLines = hosts.length
-    ? hosts.map((h) => `- ${h.name}${h.department ? ` (${h.department})` : ''}`).join('\n')
+    ? hosts.map((h) => `${h.name}${h.department ? ` (${h.department})` : ''}`).join('\n')
     : 'No hosts saved yet.';
-  return { greeting, instruction, rules, qa, documents, org, hostLines };
+  return { greeting, instruction, rules, qa, documents, org, hostLines, hosts };
 }
 
-async function runTool(name, args, ctx) {
+async function bookFromSlots(slots, ctx) {
+  const resolved = slots.hostId
+    ? { host: { id: slots.hostId, name: slots.hostName, department: slots.hostDept } }
+    : await resolveHostForNotify(slots.hostName);
+  if (!resolved.host) return { error: resolved.error || 'Host not found', matches: resolved.matches || [] };
+  const visit = await createPendingVisit({
+    name: slots.name,
+    company: slots.company || '—',
+    hostId: resolved.host.id,
+    purpose: slots.purpose,
+    date: slots.date,
+    time: slots.time,
+    visitType: 'official',
+    visitorPhone: ctx.from,
+    actor: slots.name || 'Visitor',
+    notify: true,
+  });
+  return {
+    ok: true,
+    ref: visit.ref_number,
+    host: visit.host_name,
+    text: [
+      'Your visit request has been submitted.',
+      `Visitor: ${visit.visitor_name}`,
+      `Host: ${visit.host_name}`,
+      `Date: ${formatDateNice(visit.visit_date)} at ${visit.visit_time}`,
+      `Reference: ${visit.ref_number}`,
+      `${visit.host_name} has been notified. You will receive a message here once they respond.`,
+    ].join('\n'),
+  };
+}
+
+async function runTool(name, args, ctx, slots) {
   if (name === 'lookup_host') {
     const resolved = await resolveHostForNotify(args.query);
     if (resolved.host) return { ok: true, host: resolved.host };
-    const directory = await listActiveHosts();
     return {
       error: resolved.error,
       matches: resolved.matches || [],
-      directory: directory.slice(0, 12),
     };
   }
   if (name === 'book_visit') {
-    const resolved = args.hostId
-      ? { host: { id: args.hostId } }
-      : await resolveHostForNotify(args.hostName);
-    if (!resolved.host) {
-      return {
-        error: resolved.error || 'Ask who they are visiting. Use lookup_host first.',
-        matches: resolved.matches || [],
-      };
-    }
-    const visit = await createPendingVisit({
+    const next = mergeSlots(slots, {
       name: args.name,
-      company: args.company || '—',
-      hostId: resolved.host.id,
+      company: args.company,
       purpose: args.purpose,
       date: args.date,
       time: args.time,
-      visitType: args.visitType === 'social' ? 'social' : 'official',
-      visitorPhone: ctx.from,
-      actor: args.name || 'Visitor',
-      notify: true,
+      hostName: args.hostName,
+      hostId: args.hostId || null,
     });
-    await ConversationState.clear(ctx.from, ctx.accountId || 0);
-    memory.delete(memoryKey(ctx.from, ctx.replyJid));
-    return {
-      ok: true,
-      ref: visit.ref_number,
-      status: visit.status,
-      host: visit.host_name,
-      note: `${visit.host_name} has been notified on their saved WhatsApp number.`,
-    };
+    return bookFromSlots(next, ctx);
   }
   if (name === 'check_status') {
     const visit = await Visit.findByRef(args.ref);
-    if (!visit) return { error: 'Visit not found' };
+    if (!visit) return { error: 'I could not find that reference.' };
     return {
       ref: visit.ref_number,
       visitor: visit.visitor_name,
@@ -174,7 +192,12 @@ async function runTool(name, args, ctx) {
 }
 
 async function persistTurn(from, accountId, replyJid, history, extra = {}) {
-  const payload = { welcomed: true, history, ...extra };
+  const payload = {
+    welcomed: true,
+    history: history.slice(-20),
+    slots: extra.slots || emptySlots(),
+    lastRef: extra.lastRef || null,
+  };
   remember(from, replyJid, payload);
   await ConversationState.upsert(from, 'ai', payload, accountId).catch((err) => {
     console.error('Conversation persist failed:', err.message);
@@ -187,54 +210,88 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
   const body = String(text || '').trim() || 'hello';
   const kb = await buildKnowledgePrompt();
   const prior = await ConversationState.findByPhone(from, accountId);
-  const { history, welcomed } = parseHistory(prior, from, inbound.replyJid);
+  const state = parseState(prior, from, inbound.replyJid);
+  let slots = mergeSlots(state.slots, extractSlotsFromText(body, kb.hosts));
+  let history = state.history.slice(-20);
 
-  if (!welcomed) {
+  if (!state.welcomed) {
     const welcome = FIRST_TIME_WELCOME;
-    const nextHistory = [
+    history = [
       { role: 'user', content: body },
       { role: 'assistant', content: welcome },
-    ];
-    await persistTurn(from, accountId, inbound.replyJid, nextHistory);
+    ].slice(-20);
+    await persistTurn(from, accountId, inbound.replyJid, history, { slots });
     await sendText(from, welcome, sendOpts(inbound));
     return;
   }
 
+  if (isOffTopic(body)) {
+    const reply = 'I can only help with visitor bookings, visit status, and Botho Innovations reception information. Who would you like to visit?';
+    history = [...history, { role: 'user', content: body }, { role: 'assistant', content: reply }].slice(-20);
+    await persistTurn(from, accountId, inbound.replyJid, history, { slots, lastRef: state.lastRef });
+    await sendText(from, reply, sendOpts(inbound));
+    return;
+  }
+
+  if (isConfirm(body) && slotsReady(slots)) {
+    const booked = await bookFromSlots(slots, inbound);
+    if (booked.ok) {
+      history = [...history, { role: 'user', content: body }, { role: 'assistant', content: booked.text }].slice(-20);
+      await persistTurn(from, accountId, inbound.replyJid, history, { slots: emptySlots(), lastRef: booked.ref });
+      await sendText(from, booked.text, sendOpts(inbound));
+      return;
+    }
+    if (booked.matches?.length) {
+      const reply = `I found more than one host. Please choose one:\n${booked.matches.map((h, i) => `${i + 1}. ${h.name}${h.department ? ` (${h.department})` : ''}`).join('\n')}`;
+      history = [...history, { role: 'user', content: body }, { role: 'assistant', content: reply }].slice(-20);
+      await persistTurn(from, accountId, inbound.replyJid, history, { slots, lastRef: state.lastRef });
+      await sendText(from, reply, sendOpts(inbound));
+      return;
+    }
+  }
+
+  const missing = missingSlot(slots);
   const messages = [
     {
       role: 'system',
       content: [
-        `You are the live WhatsApp assistant for ${kb.org}. Talk naturally, in the visitor's language, one short message at a time.`,
-        'Have a real conversation. Never repeat the welcome message after it has already been sent.',
-        'Collect only missing booking fields: visitor name, company, purpose, date, time, and the host to notify.',
-        'Always ask who they are visiting if that is missing. Match hosts only with lookup_host. Never invent a host, department, phone, service, price, or policy.',
-        'If several hosts match, list those names and ask the visitor to pick one.',
-        'Do not call book_visit until lookup_host matched one host and the required fields are present.',
-        'Answer company questions ONLY from the knowledge below (rules, FAQs, documents, websites) plus the host directory. If it is not there, say you do not have that information and offer to book a visit.',
+        `You are the WhatsApp visitor assistant for ${kb.org}.`,
+        'Stay inside visitor management only: bookings, host matching, visit status, and the company knowledge below.',
+        'If asked for programming, code, homework, or anything outside reception, politely refuse and return to the booking.',
+        'Write like a calm receptionist. Short, clear, professional. No asterisks, no markdown, no bullet stars, no emojis unless the visitor uses them.',
+        'Use the last 20 messages and the collected fields. Never ask again for a field that is already collected.',
+        'A visitor and a host may share the same name. That is valid. Do not assume the visitor is booking themselves.',
+        'Do not invent hosts, departments, prices, or policies. Match hosts only with lookup_host or the saved host list.',
+        'When every field is present and the visitor confirms, call book_visit. Then confirm the reference in plain text.',
+        `Collected fields so far:\n${summaryLines(slots)}`,
+        missing ? `Next missing field: ${missing}. Ask only for that.` : 'All booking fields are present. Confirm once, then book.',
         kb.instruction ? `Business instructions:\n${kb.instruction}` : '',
         kb.rules ? `Business rules:\n${kb.rules}` : '',
         kb.qa ? `FAQs:\n${kb.qa}` : '',
-        kb.documents ? `Company documents and website text:\n${kb.documents}` : '',
-        `Saved hosts (notify only these people):\n${kb.hostLines}`,
-        'Approved visitors get a QR pass and a backup PIN.',
+        kb.documents ? `Company documents:\n${kb.documents}` : '',
+        `Saved hosts:\n${kb.hostLines}`,
       ]
         .filter(Boolean)
         .join('\n\n'),
     },
-    ...history.slice(-16),
+    ...history,
     { role: 'user', content: body },
   ];
 
   if (!process.env.OPENAI_API_KEY) {
-    const fallback = 'Thanks. Please send any missing details: name, company, purpose, date, time, and the host you want to see.';
-    await persistTurn(from, accountId, inbound.replyJid, [...history, { role: 'user', content: body }, { role: 'assistant', content: fallback }]);
-    await sendText(from, fallback, sendOpts(inbound));
+    const reply = slotsReady(slots)
+      ? `I have these details:\n${summaryLines(slots)}\nReply yes to submit the request.`
+      : askFor(missing);
+    history = [...history, { role: 'user', content: body }, { role: 'assistant', content: reply }].slice(-20);
+    await persistTurn(from, accountId, inbound.replyJid, history, { slots, lastRef: state.lastRef });
+    await sendText(from, reply, sendOpts(inbound));
     return;
   }
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
   let reply = '';
+  let bookedRef = state.lastRef;
 
   try {
     for (let i = 0; i < 5; i += 1) {
@@ -242,7 +299,8 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
         model,
         messages,
         tools: TOOLS,
-        temperature: 0.3,
+        temperature: 0,
+        max_tokens: 280,
       });
       const choice = completion.choices?.[0];
       const assistant = choice?.message;
@@ -256,31 +314,41 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
           } catch {
             args = {};
           }
-          const result = await runTool(call.function.name, args, inbound);
+          const result = await runTool(call.function.name, args, inbound, slots);
+          if (result.host) {
+            slots = mergeSlots(slots, {
+              hostName: result.host.name,
+              hostId: result.host.id,
+              hostDept: result.host.department,
+            });
+          }
+          if (result.ok && result.ref) {
+            bookedRef = result.ref;
+            slots = emptySlots();
+            if (result.text) reply = result.text;
+          }
           messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         }
         continue;
       }
-      reply = String(assistant.content || '').trim();
+      reply = cleanReply(assistant.content || '');
       break;
     }
   } catch (err) {
     console.error('Visitor agent failed:', err.message);
-    reply = 'I can help you book a visit. Please send your name, company, purpose, date, time, and the host you want to see.';
+    reply = '';
   }
 
-  if (!reply || reply === FIRST_TIME_WELCOME || reply === kb.greeting) {
-    reply = 'Thanks — I have that. Who are you visiting? Please send the host name or department.';
+  if (!reply) {
+    reply = bookedRef
+      ? `Your visit request is in. Reference ${bookedRef}.`
+      : slotsReady(slots)
+        ? `I have these details:\n${summaryLines(slots)}\nShall I submit this visit request?`
+        : askFor(missing);
   }
 
-  const storedHistory = messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => ({ role: m.role, content: String(m.content || '').slice(0, 2000) }))
-    .slice(-20);
-  if (!storedHistory.some((m) => m.role === 'assistant' && m.content === reply)) {
-    storedHistory.push({ role: 'assistant', content: reply });
-  }
-  await persistTurn(from, accountId, inbound.replyJid, storedHistory);
+  history = [...history, { role: 'user', content: body }, { role: 'assistant', content: reply }].slice(-20);
+  await persistTurn(from, accountId, inbound.replyJid, history, { slots, lastRef: bookedRef });
   const sent = await sendText(from, reply, sendOpts(inbound));
   if (!sent) console.error('Visitor agent reply was not delivered');
 }
