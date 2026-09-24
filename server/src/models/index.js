@@ -243,42 +243,33 @@ function hydrateConversation(row) {
   return { ...row, collected_data: data };
 }
 
+// One conversation per visitor phone number (there is a single company WhatsApp).
+// The table enforces UNIQUE (phone_number), so the key must be the phone alone.
+function conversationKey(phone) {
+  return normalizePhone(phone) || String(phone || '').trim();
+}
+
 export const ConversationState = {
-  findByPhone: async (phone, accountId = 0) => {
-    const digits = normalizePhone(phone) || String(phone || '').trim();
-    if (!digits) return null;
-    const exact = await queryOne(
-      `SELECT * FROM ${T.conversations} WHERE phone_number = $1 AND account_id = $2`,
-      [digits, Number(accountId) || 0]
-    );
-    if (exact) return hydrateConversation(exact);
-    const latest = await queryOne(
-      `SELECT * FROM ${T.conversations}
-       WHERE phone_number = $1 OR phone_number = $2
-       ORDER BY updated_at DESC LIMIT 1`,
-      [digits, String(phone || '').trim()]
-    );
-    return hydrateConversation(latest);
+  findByPhone: async (phone) => {
+    const key = conversationKey(phone);
+    if (!key) return null;
+    return hydrateConversation(await queryOne(`SELECT * FROM ${T.conversations} WHERE phone_number = $1`, [key]));
   },
   upsert: async (phone, current_step, collected_data = {}, accountId = 0) => {
-    const digits = normalizePhone(phone) || String(phone || '').trim();
     const row = await queryOne(
       `INSERT INTO ${T.conversations} (phone_number, current_step, collected_data, account_id, updated_at)
        VALUES ($1,$2,$3::jsonb,$4, NOW())
-       ON CONFLICT (phone_number, account_id) DO UPDATE
+       ON CONFLICT (phone_number) DO UPDATE
          SET current_step = EXCLUDED.current_step,
              collected_data = EXCLUDED.collected_data,
+             account_id = EXCLUDED.account_id,
              updated_at = NOW()
        RETURNING *`,
-      [digits, current_step, JSON.stringify(collected_data || {}), Number(accountId) || 0]
+      [conversationKey(phone), current_step, JSON.stringify(collected_data || {}), Number(accountId) || 0]
     );
     return hydrateConversation(row);
   },
-  clear: (phone, accountId = 0) =>
-    query(`DELETE FROM ${T.conversations} WHERE phone_number = $1 AND account_id = $2`, [
-      normalizePhone(phone) || String(phone || '').trim(),
-      Number(accountId) || 0,
-    ]),
+  clear: (phone) => query(`DELETE FROM ${T.conversations} WHERE phone_number = $1`, [conversationKey(phone)]),
 };
 
 export const Knowledge = {

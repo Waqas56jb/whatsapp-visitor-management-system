@@ -21,7 +21,7 @@ const STATE_VERSION = 2;
 const MAX_OPTIONS = 20;
 const REF_RE = /\bVMS-\d{4}-\d{3,}\b/i;
 const THANKS_RE = /^(thanks|thank you|thank u|thx|ty|ok thanks|okay thanks|cool|great|noted|alright|perfect|ke a leboga|re a leboga|ke itumetse|ke leboga)[.! ]*$/i;
-const PATTERNY = /\b(from|visit|visiting|see|meet|my name|i am|i'm|want to|would like|ke nna|ke tswa)\b/i;
+const PATTERNY = /\b(from|visit|visiting|see|meet|my name|i am|i'm|im|want to|would like|ke nna|ke tswa)\b/i;
 
 export function freshState(prev = {}) {
   return {
@@ -129,9 +129,16 @@ function advance(state) {
   return t(state.lang, 'confirm', { summary: summaryText(state.slots, state.lang) });
 }
 
+const FILLER = /\b(?:i'?m|i am|im|my|name|is|company|from|the|comapny)\b/g;
+
+function core(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z\s']/g, ' ').replace(FILLER, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// "Culinova company" or "I'm Waqas Naveed" re-sent later just restates a detail we already have.
 function repeatsFilledSlot(slots, value) {
-  const v = String(value || '').trim().toLowerCase();
-  return ['name', 'company', 'purpose', 'hostName'].some((f) => slots[f] && String(slots[f]).trim().toLowerCase() === v);
+  const v = core(value);
+  return Boolean(v) && ['name', 'company', 'purpose', 'hostName'].some((f) => slots[f] && core(slots[f]) === v);
 }
 
 function filledMap(slots) {
@@ -153,7 +160,9 @@ function handleCollect(state, raw, ctx) {
   let hostQuery = found.host || '';
   let explicitHost = Boolean(found.host);
 
-  if (asked && asked !== 'host' && !found[asked] && (!anyFound || (asked !== 'name' && !PATTERNY.test(raw)))) {
+  // A message that only restates details we already have ("Im waqas Naveed" again) is not an answer to the pending question.
+  const restatesKnown = ['name', 'company', 'purpose'].some((f) => found[f] && state.slots[f]);
+  if (asked && asked !== 'host' && !found[asked] && !restatesKnown && (!anyFound || (asked !== 'name' && !PATTERNY.test(raw)))) {
     const answer = answerForField(asked, raw, { today: ctx.today });
     // Re-sending an earlier answer (e.g. the name again) is not an answer to the new question.
     if (answer && !repeatsFilledSlot(state.slots, answer)) found[asked] = answer;

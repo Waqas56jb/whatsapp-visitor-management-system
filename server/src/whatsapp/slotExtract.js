@@ -172,7 +172,7 @@ const PURPOSE_TAIL =
   "(?=$|[.;!?\\n,]|\\s(?:and\\s+)?(?:i\\s+)?(?:want|would like)\\b|\\s(?:on|ka)\\s+(?:\\d|the\\s+\\d|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today)|\\sat\\s+\\d|\\s(?:tomorrow|today|kamoso|gompieno)\\b|\\swith\\s+(?:mr|mrs|ms|dr|rra|mma)\\b)";
 
 const PURPOSE_NOUNS =
-  'meeting|interview|delivery|consultation|appointment|presentation|pitch|demo|training|discussion|maintenance|inspection|audit|review|collection|installation|workshop|seminar|briefing|negotiation|contract|proposal|tender|partnership';
+  'meeting|interview|delivery|consultation|consulting|consultancy|consultant|appointment|presentation|pitch|demo|training|discussion|maintenance|inspection|audit|review|collection|installation|workshop|seminar|briefing|negotiation|contract|proposal|tender|partnership|support|repair|service|sales';
 
 function extractPurpose(text) {
   const explicit = text.match(
@@ -190,7 +190,7 @@ function extractPurpose(text) {
 
   const noun = text.match(
     new RegExp(
-      `\\b(?:for|regarding|about|re)\\s+(?:a|an|the|our|my)?\\s*((?:[A-Za-z\\-]+\\s+){0,2}(?:${PURPOSE_NOUNS})\\b[^.,;!?\\n]{0,40}?)(?=$|[.,;!?\\n]|\\s(?:on|at|with|tomorrow|today)\\b|\\s\\d)`,
+      `\\b(?:for|regarding|about|re)\\s+(?:(?:a|an|the|our|my)\\s+)?((?:[A-Za-z\\-]+\\s+){0,2}(?:${PURPOSE_NOUNS})\\b[^.,;!?\\n]{0,40}?)(?=$|[.,;!?\\n]|\\s(?:on|at|with|tomorrow|today|visit)\\b|\\s(?:i\\s+)?(?:want|would like|need)\\b|\\s\\d)`,
       'i'
     )
   );

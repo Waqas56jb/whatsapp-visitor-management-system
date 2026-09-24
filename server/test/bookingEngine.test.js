@@ -359,6 +359,38 @@ describe('production transcript from the review', () => {
   });
 });
 
+describe('production transcript 24/09 23:18 (state must carry across every message)', () => {
+  test('company phrasings and a short purpose never reset to the welcome', () => {
+    const { replies, state } = chat([
+      'Hi',
+      'Im waqas Naveed',
+      'Im visiting from Culinova',
+      'Im waqas Naveed',
+      'Culinova company',
+      'For cusltant',
+    ]);
+    assert.equal(replies[1], 'Which company are you visiting from?');
+    assert.equal(replies[2], 'What is the purpose of your visit?');
+    for (const r of replies.slice(1)) assert.doesNotMatch(r, /^Welcome|May I have your full name/);
+    assert.equal(state.slots.name, 'Waqas Naveed');
+    assert.equal(state.slots.company, 'Culinova');
+    assert.equal(state.slots.purpose, 'Cusltant');
+    assert.match(replies.at(-1), /Who would you like to visit/);
+  });
+
+  test('one-liner with company, purpose, and date', () => {
+    const { state, replies } = chat([
+      'Hi',
+      'Im waqas from culinova comapny for ai consulting i want to visit on 25 September 2026',
+    ]);
+    assert.equal(state.slots.name, 'Waqas');
+    assert.equal(state.slots.company, 'Culinova');
+    assert.equal(state.slots.purpose, 'Ai consulting');
+    assert.equal(state.slots.date, '2026-09-25');
+    assert.match(replies[1], /Who would you like to visit/);
+  });
+});
+
 describe('matchers', () => {
   test('host matching', () => {
     assert.deepEqual(matchHosts('Procurement', HOSTS), []);

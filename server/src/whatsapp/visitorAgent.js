@@ -57,16 +57,46 @@ async function statusReply(ref, from, lang) {
   });
 }
 
+// Write-through copy of every visitor's conversation state, so a failed or slow DB write can
+// never make the bot forget a booking mid-chat. The DB stays the durable store across restarts.
+const liveStates = new Map();
+
+function stateKey(from) {
+  return normalizePhone(from) || String(from || '');
+}
+
+async function loadConversation(from) {
+  const cached = liveStates.get(stateKey(from));
+  let stored = null;
+  try {
+    stored = (await ConversationState.findByPhone(from))?.collected_data || null;
+  } catch (err) {
+    console.error(`Conversation load failed for ${from}: ${err.message}`);
+  }
+  const newest = (cached?.savedAt || 0) >= (stored?.savedAt || 0) ? cached : stored;
+  return loadState(newest);
+}
+
+async function saveConversation(from, state, accountId) {
+  state.savedAt = Date.now();
+  liveStates.set(stateKey(from), state);
+  if (liveStates.size > 5000) liveStates.delete(liveStates.keys().next().value);
+  try {
+    await ConversationState.upsert(from, state.stage, state, accountId);
+  } catch (err) {
+    console.error(`CONVERSATION STATE NOT SAVED for ${from} (kept in memory): ${err.message}`);
+  }
+}
+
 export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = null }) {
   const accountId = ctx.accountId || 0;
   const sendOpts = { accountId: accountId || null, replyJid: replyJid || ctx.replyJid || null };
-  const [prior, hosts, settings] = await Promise.all([
-    ConversationState.findByPhone(from, accountId),
+  const [previous, hosts, settings] = await Promise.all([
+    loadConversation(from),
     listActiveHosts(),
     Settings.get().catch(() => null),
   ]);
   const orgName = settings?.org_name || 'Botho Innovations';
-  const previous = loadState(prior?.collected_data);
   const turn = runTurn(previous, text, { hosts, today: todayStamp(), orgName });
 
   let state = turn.state;
@@ -91,9 +121,7 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
     { role: 'user', content: String(text || '[media]') },
     { role: 'assistant', content: reply },
   ].slice(-20);
-  await ConversationState.upsert(from, state.stage, state, accountId).catch((err) =>
-    console.error('Conversation persist failed:', err.message)
-  );
+  await saveConversation(from, state, accountId);
 
   const sent = await sendText(from, reply, sendOpts);
   if (!sent) console.error(`Visitor reply was not delivered to ${from}`);
@@ -101,7 +129,6 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
 }
 
 export async function sendVisitorError(from, ctx = {}, replyJid = null) {
-  const prior = await ConversationState.findByPhone(from, ctx.accountId || 0).catch(() => null);
-  const lang = loadState(prior?.collected_data).lang;
+  const { lang } = await loadConversation(from);
   await sendText(from, t(lang, 'error'), { accountId: ctx.accountId || null, replyJid: replyJid || null });
 }
