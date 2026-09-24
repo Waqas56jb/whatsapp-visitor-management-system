@@ -391,6 +391,45 @@ describe('production transcript 24/09 23:18 (state must carry across every messa
   });
 });
 
+describe('production transcript 25/09 00:02 (questions about an existing request)', () => {
+  test('questions after a booking are answered, never stored as name or company', () => {
+    const first = chat([
+      'Hi',
+      'i am waqas naveed',
+      'i am from culinova',
+      'ai consultant',
+      'i want to visit AI/ML engineer',
+      'yes tomorrow at 4pm',
+      'yes',
+    ]);
+    assert.equal(first.log.at(-1).booked.hostId, 9);
+    const { log, state } = chat(
+      [
+        'hi',
+        'have you given my reuqest to waqas',
+        'waqas',
+        'i already applied for visit can you tell me which which host you booked my oppointment',
+        'ai consultant',
+      ],
+      { state: first.state }
+    );
+    assert.match(log[0].reply, /^Welcome/);
+    assert.equal(log[1].reply, '[faq] ');
+    assert.equal(log[1].state.slots.name, '');
+    assert.equal(log[2].reply, 'Which company are you visiting from?');
+    assert.equal(log[3].reply, '[faq] Which company are you visiting from?');
+    assert.equal(log[3].state.slots.company, '');
+    assert.equal(state.slots.company, 'Ai Consultant');
+  });
+
+  test('a question that carries booking details still books', () => {
+    const { state } = chat(['Hi', 'Michael Ntsima', 'Botho Innovations', 'Meeting', 'Can I visit Hamza tomorrow at 10am?']);
+    assert.equal(state.slots.hostId, 10);
+    assert.equal(state.slots.date, '2026-09-25');
+    assert.equal(state.slots.time, '10:00');
+  });
+});
+
 describe('matchers', () => {
   test('host matching', () => {
     assert.deepEqual(matchHosts('Procurement', HOSTS), []);

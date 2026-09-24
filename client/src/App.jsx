@@ -13,6 +13,8 @@ function routeFromPath() {
   if (path === '/validate' || path === '/gate') return { type: 'validate' };
   const match = path.match(/^\/pass\/([A-Za-z0-9]+)/);
   if (match) return { type: 'pass', token: match[1] };
+  // Link sent to hosts on WhatsApp: open sign-in (or the dashboard) straight on Visit requests.
+  if (path === '/portal' || path === '/requests') return { type: 'app', portal: true };
   return { type: 'app' };
 }
 
@@ -29,6 +31,8 @@ export default function App() {
       const acc = JSON.parse(savedUser);
       setCurrentUser(acc);
       setAppOn(true);
+    } else if (route.portal) {
+      setLoginOn(true);
     }
   }, []);
 
@@ -71,7 +75,13 @@ export default function App() {
       <div id="glow"></div>
       <Landing hidden={appOn} navLabel={currentUser ? 'Go to Dashboard' : 'Client Login'} onOpenLogin={() => setLoginOn(true)} />
       <LoginScreen on={loginOn} onClose={() => setLoginOn(false)} onSuccess={enterApp} />
-      <Portal on={appOn} currentUser={currentUser} onBackToSite={backToSite} onToast={showToast} />
+      <Portal
+        on={appOn}
+        currentUser={currentUser}
+        initialView={route.portal ? 'requests' : 'overview'}
+        onBackToSite={backToSite}
+        onToast={showToast}
+      />
     </LanguageProvider>
   );
 }

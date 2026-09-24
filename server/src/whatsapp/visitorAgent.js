@@ -6,7 +6,7 @@ import { todayStamp } from '../utils/dateParse.js';
 import { formatDate } from '../utils/mappers.js';
 import { normalizePhone } from '../utils/phone.js';
 import { afterBooking, currentPrompt, loadState, runTurn } from './bookingEngine.js';
-import { answerQuestion } from './faq.js';
+import { answerVisitor, loadVisitorVisits } from './faq.js';
 import { formatVisitDate, formatVisitTime, statusLabel, t } from './messages.js';
 import { sendText } from './sendMessage.js';
 
@@ -110,11 +110,36 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
     } else if (action.type === 'status') {
       reply = joinReplies(reply, await statusReply(action.ref, from, state.lang), action.followUp);
     } else if (action.type === 'faq') {
-      const answer = await answerQuestion({ question: action.question, lang: state.lang, orgName, hosts });
+      const answer = await answerVisitor({
+        phone: from,
+        question: action.question,
+        lang: state.lang,
+        orgName,
+        hosts,
+        slots: state.slots,
+        pendingQuestion: action.followUp,
+      });
       reply = joinReplies(reply, answer, action.followUp);
     }
   }
   if (!reply) reply = currentPrompt(state) || t(state.lang, 'welcome');
+
+  // A returning visitor who greets again is reminded of their open request.
+  if (reply === t(state.lang, 'welcome')) {
+    const open = (await loadVisitorVisits(from, 3)).find(
+      (v) => ['pending', 'approved'].includes(v.status) && v.date >= todayStamp()
+    );
+    if (open) {
+      const summary = t(state.lang, 'visit.summary', {
+        ref: open.ref,
+        host: open.host,
+        date: formatVisitDate(open.date, state.lang),
+        time: formatVisitTime(open.time, state.lang),
+        status: statusLabel(open.status, state.lang),
+      });
+      reply = joinReplies(reply, t(state.lang, 'welcome.existing', { summary }));
+    }
+  }
 
   state.history = [
     ...(state.history || []),

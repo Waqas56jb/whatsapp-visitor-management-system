@@ -17,6 +17,12 @@ async function visitorLang(phone) {
   return state?.collected_data?.lang === 'tn' ? 'tn' : 'en';
 }
 
+// Opens the Client Portal sign-in straight on Visit requests (client route /portal).
+export function portalRequestsLink() {
+  const base = String(process.env.CLIENT_PORTAL_URL || process.env.CLIENT_ORIGIN || '').split(',')[0].trim().replace(/\/$/, '');
+  return base ? `${base}/portal` : '';
+}
+
 function visitorPhoneOf(visit) {
   return visit.visitor_phone || visit.visitor_profile_phone || null;
 }
@@ -47,10 +53,12 @@ export async function notifyHostNewVisit(visit) {
     return { sent: false, reason: 'same_phone' };
   }
 
+  const portal = portalRequestsLink();
   const sent = await sendTextToPhone(
     phone,
     [
-      'New visit request',
+      `Hello ${String(visit.host_name || '').split(' ')[0]}, you have a new visit request.`,
+      '',
       `Visitor: ${visit.visitor_name}`,
       `Company: ${visit.visitor_company || '—'}`,
       `Purpose: ${visit.purpose}`,
@@ -58,7 +66,9 @@ export async function notifyHostNewVisit(visit) {
       `Time: ${formatVisitTime(visit.visit_time, 'en')}`,
       `Reference: ${visit.ref_number}`,
       '',
-      'Please approve or reject this request in the Client Portal → Visit requests.',
+      portal
+        ? `Please open the Client Portal to approve or reject it:\n${portal}`
+        : 'Please open the Client Portal → Visit requests to approve or reject it.',
     ].join('\n')
   );
   if (!sent) console.error(`Host WhatsApp notify failed for ${visit.host_name} ${phone} ${visit.ref_number}`);

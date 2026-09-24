@@ -137,10 +137,10 @@ function ReqCard({ v, onDecide, busy }) {
   );
 }
 
-export default function Portal({ on, currentUser, onBackToSite, onToast }) {
+export default function Portal({ on, currentUser, initialView = 'overview', onBackToSite, onToast }) {
   const { t, formatDate } = useI18n();
   const fmt = useFormatters();
-  const [view, setView] = useState('overview');
+  const [view, setView] = useState(initialView);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [visits, setVisits] = useState([]);
   const [notifications, setNotifications] = useState([]);

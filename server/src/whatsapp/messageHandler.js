@@ -1,5 +1,6 @@
 import { ConversationLog, Host } from '../models/index.js';
 import { chatJidFromMsg, extractText, isIgnorableJid, isUserChatMessage, phoneFromMsg } from './inbound.js';
+import { portalRequestsLink } from './notify.js';
 import { sendText } from './sendMessage.js';
 import { handleVisitorWithAgent, sendVisitorError } from './visitorAgent.js';
 
@@ -31,11 +32,14 @@ async function handleHostCommand(from, text) {
   if (!HOST_DECISION_RE.test(String(text || '').trim())) return false;
   const host = await Host.findByPhone(from);
   if (!host) return false;
+  const portal = portalRequestsLink();
   await sendText(
     from,
     [
       'Approving or rejecting visits on WhatsApp is not available yet.',
-      'Please open the Client Portal → Visit requests to approve or reject this visit.',
+      portal
+        ? `Please open the Client Portal to approve or reject this visit:\n${portal}`
+        : 'Please open the Client Portal → Visit requests to approve or reject this visit.',
     ].join('\n'),
     { onlyTarget: true }
   );

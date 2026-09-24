@@ -84,12 +84,16 @@ export function isNo(text) {
   );
 }
 
+// Questions and requests about existing visits ("have you given my request to waqas", "can you tell me
+// which host…") must be answered, never stored as a name, company, or purpose.
 export function looksLikeQuestion(text) {
   const value = String(text || '').trim().toLowerCase();
   return (
     value.includes('?') ||
-    /^(what|where|when|who|whom|which|why|how|can|could|do|does|did|is|are|will|would|should|may i)\b/.test(value) ||
-    /^(a o|a le|a go|a ke|ke eng|ke kae|ke leng|jang|bokae|goreng|ke mang)\b/.test(value)
+    /^(what|where|when|who|whom|which|why|how|can|could|do|does|did|is|are|was|were|will|would|should|have|has|had|may i|tell me|please tell|kindly tell|let me know|any update|update)\b/.test(value) ||
+    /\b(can you|could you|would you|will you|did you|have you|has my|is my|was my|tell me|let me know|already applied|already booked|already requested|already sent|my request|my booking|my appointment|my reference|status of|any update)\b/.test(value) ||
+    /^(a o|a le|a go|a ke|ke eng|ke kae|ke leng|jang|bokae|goreng|ke mang)\b/.test(value) ||
+    /\b(kopo ya me|ketelo ya me)\b/.test(value)
   );
 }
 

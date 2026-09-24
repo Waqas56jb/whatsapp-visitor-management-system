@@ -157,6 +157,19 @@ function handleCollect(state, raw, ctx) {
   const startField = asked || missingField(state.slots) || 'name';
   const found = extractFields(raw, { today: ctx.today, orgName: ctx.orgName, startField, known: filledMap(state.slots) });
   const anyFound = Object.keys(found).length > 0;
+
+  // Questions are answered, not stored — unless they clearly carry booking details
+  // ("Can I visit Hamza tomorrow at 10am?").
+  if (looksLikeQuestion(raw) && Object.keys(found).length < 2) {
+    const started = Object.values(state.slots).some(Boolean);
+    if (wasIdle) state.stage = 'idle';
+    state.welcomed = true;
+    return {
+      reply: '',
+      actions: [{ type: 'faq', question: raw, followUp: started ? currentPrompt(state) : '' }],
+    };
+  }
+
   let hostQuery = found.host || '';
   let explicitHost = Boolean(found.host);
 
