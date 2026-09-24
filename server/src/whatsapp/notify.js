@@ -1,13 +1,28 @@
 import { formatDate, formatDateNice } from '../utils/mappers.js';
 import { generateQrBuffer } from '../utils/generateToken.js';
-import { Audit, Host, Settings } from '../models/index.js';
+import { Audit, ConversationState, Host, Settings } from '../models/index.js';
 import { normalizePhone } from '../utils/phone.js';
+import { formatVisitDate, formatVisitTime, t } from './messages.js';
 import { sendImage, sendText, sendTextToPhone } from './sendMessage.js';
 
 async function locationLabel() {
   if (process.env.ORG_LOCATION) return process.env.ORG_LOCATION;
   const settings = await Settings.get().catch(() => null);
   return settings?.org_name || 'Botho Innovations';
+}
+
+// The visitor's chat language, remembered by the booking conversation.
+async function visitorLang(phone) {
+  const state = await ConversationState.findByPhone(phone, 0).catch(() => null);
+  return state?.collected_data?.lang === 'tn' ? 'tn' : 'en';
+}
+
+function visitorPhoneOf(visit) {
+  return visit.visitor_phone || visit.visitor_profile_phone || null;
+}
+
+function sendOpts(visit) {
+  return { accountId: visit.host_account_id || null };
 }
 
 export async function notifyHostNewVisit(visit) {
@@ -22,29 +37,28 @@ export async function notifyHostNewVisit(visit) {
   }
 
   const phone = normalizePhone(host?.phone || visit.host_phone);
-  const visitorPhone = normalizePhone(visit.visitor_phone || visit.visitor_profile_phone);
+  const visitorPhone = normalizePhone(visitorPhoneOf(visit));
   if (!phone) {
     console.warn(`Host ${visit.host_name} has no phone — skipped WhatsApp notify`);
     return { sent: false, reason: 'no_phone' };
   }
   if (visitorPhone && phone === visitorPhone) {
-    console.warn(`Host ${visit.host_name} phone matches the visitor — approve prompt not sent to visitor chat`);
+    console.warn(`Host ${visit.host_name} phone matches the visitor — host notify skipped`);
     return { sent: false, reason: 'same_phone' };
   }
 
   const sent = await sendTextToPhone(
     phone,
     [
-      '🔔 New visit request',
+      'New visit request',
       `Visitor: ${visit.visitor_name}`,
       `Company: ${visit.visitor_company || '—'}`,
-      `Type: ${visit.visit_type === 'social' ? 'Social' : 'Official'}`,
       `Purpose: ${visit.purpose}`,
-      `Date: ${formatDateNice(visit.visit_date)} at ${visit.visit_time}`,
+      `Date: ${formatVisitDate(formatDate(visit.visit_date), 'en')}`,
+      `Time: ${formatVisitTime(visit.visit_time, 'en')}`,
       `Reference: ${visit.ref_number}`,
       '',
-      'Please open the Client Portal to approve or reject this visit request.',
-      'WhatsApp approve/reject is not available yet and will be added after project lock.',
+      'Please approve or reject this request in the Client Portal → Visit requests.',
     ].join('\n')
   );
   if (!sent) console.error(`Host WhatsApp notify failed for ${visit.host_name} ${phone} ${visit.ref_number}`);
@@ -52,40 +66,27 @@ export async function notifyHostNewVisit(visit) {
 }
 
 export async function notifyVisitorSubmitted(visit) {
-  const phone = visit.visitor_phone || visit.visitor_profile_phone;
+  const phone = visitorPhoneOf(visit);
   if (!phone) return;
-  await sendText(
-    phone,
-    [
-      '✅ Request submitted!',
-      `Reference: ${visit.ref_number}`,
-      'Status: Pending host approval.',
-      "You'll be notified here once your host responds.",
-    ].join('\n'),
-    { accountId: visit.host_account_id || null, onlyTarget: true }
-  );
-}
-
-function sendOpts(visit) {
-  return { accountId: visit.host_account_id || null };
+  const lang = await visitorLang(phone);
+  await sendText(phone, t(lang, 'notify.submitted', { ref: visit.ref_number }), {
+    accountId: visit.host_account_id || null,
+    onlyTarget: true,
+  });
 }
 
 export async function notifyVisitorApproved(visit) {
-  const phone = visit.visitor_phone || visit.visitor_profile_phone;
+  const phone = visitorPhoneOf(visit);
   if (!phone) return;
-
-  const location = await locationLabel();
-  const caption = [
-    '✅ Your visit has been approved!',
-    `Host: ${visit.host_name}`,
-    `Date: ${formatDateNice(visit.visit_date) || formatDate(visit.visit_date)}`,
-    `Time: ${visit.visit_time}`,
-    `Location: ${location}`,
-    visit.pin ? `Backup PIN: ${visit.pin}` : null,
-    'Show this QR at reception, or enter the PIN if the camera cannot scan.',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const lang = await visitorLang(phone);
+  const caption = t(lang, 'notify.approved', {
+    ref: visit.ref_number,
+    host: visit.host_name,
+    date: formatVisitDate(formatDate(visit.visit_date), lang),
+    time: formatVisitTime(visit.visit_time, lang),
+    location: await locationLabel(),
+    pinLine: visit.pin ? t(lang, 'notify.pinLine', { pin: visit.pin }) : '',
+  });
 
   if (!visit.qr_token) {
     await sendText(phone, caption, sendOpts(visit));
@@ -102,21 +103,18 @@ export async function notifyVisitorApproved(visit) {
 }
 
 export async function notifyVisitorRejected(visit) {
-  const phone = visit.visitor_phone || visit.visitor_profile_phone;
+  const phone = visitorPhoneOf(visit);
   if (!phone) return;
-  const date = formatDateNice(visit.visit_date) || formatDate(visit.visit_date) || 'your requested date';
-  await sendText(
-    phone,
-    `We're sorry, your visit request for ${date} has been declined by the host.`,
-    sendOpts(visit)
-  );
+  const lang = await visitorLang(phone);
+  const date = formatVisitDate(formatDate(visit.visit_date), lang) || formatDateNice(visit.visit_date);
+  await sendText(phone, t(lang, 'notify.rejected', { ref: visit.ref_number, date }), sendOpts(visit));
 }
 
 export async function notifyHostDecisionResult(hostPhone, visit, decision) {
   if (!hostPhone) return;
   const text =
     decision === 'approved'
-      ? `✅ Approved. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
-      : `Request rejected. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`;
+      ? `Approved. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
+      : `Rejected. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`;
   await sendText(hostPhone, text, { ...sendOpts(visit), onlyTarget: true });
 }

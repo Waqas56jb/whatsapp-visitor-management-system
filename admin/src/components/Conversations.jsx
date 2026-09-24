@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, MessagesSquare } from 'lucide-react';
 import api from '../api/client';
-
-function formatWhen(value) {
-  if (!value) return '';
-  return new Date(value).toLocaleString();
-}
+import { useI18n } from '../i18n';
 
 export default function Conversations({ listPath = '/conversations' }) {
+  const { t, locale } = useI18n();
   const [threads, setThreads] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const formatWhen = (value) => (value ? new Date(value).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
   useEffect(() => {
     let cancelled = false;
@@ -44,35 +43,35 @@ export default function Conversations({ listPath = '/conversations' }) {
     <div className={'chat-split' + (selected ? ' has-thread' : '')}>
       <aside className="chat-list">
         {loading ? (
-          <p className="chat-empty">Loading conversations…</p>
+          <p className="chat-empty">{t('Loading conversations…')}</p>
         ) : threads.length ? (
-          threads.map((t) => (
+          threads.map((th) => (
             <button
-              key={t.phone}
-              className={'chat-thread-item' + (selected?.phone === t.phone ? ' active' : '')}
-              onClick={() => openThread(t)}
+              key={th.phone}
+              className={'chat-thread-item' + (selected?.phone === th.phone ? ' active' : '')}
+              onClick={() => openThread(th)}
             >
-              <b>{t.visitorName || t.phone}</b>
-              <span className="chat-preview">{t.lastMessage || '—'}</span>
+              <b>{th.visitorName || `+${th.phone}`}</b>
+              <span className="chat-preview">{th.lastMessage || '—'}</span>
               <em>
-                {t.messageCount} messages · {formatWhen(t.lastAt)}
+                {t('{count} messages', { count: th.messageCount })} · {formatWhen(th.lastAt)}
               </em>
             </button>
           ))
         ) : (
-          <p className="chat-empty">No conversations yet</p>
+          <p className="chat-empty">{t('No WhatsApp conversations yet')}</p>
         )}
       </aside>
       <div className="chat-thread">
         {selected ? (
           <>
             <div className="chat-thread-head">
-              <button className="chat-back" type="button" onClick={() => setSelected(null)} aria-label="Back to conversations">
+              <button className="chat-back" type="button" onClick={() => setSelected(null)} aria-label={t('Back to conversations')}>
                 <ArrowLeft size={16} />
               </button>
               <div>
-                <b>{selected.visitorName || selected.phone}</b>
-                <span>{selected.phone}</span>
+                <b>{selected.visitorName || `+${selected.phone}`}</b>
+                <span>+{selected.phone}</span>
               </div>
             </div>
             <div className="chat-bubbles">
@@ -87,7 +86,7 @@ export default function Conversations({ listPath = '/conversations' }) {
         ) : (
           <div className="chat-empty-panel">
             <MessagesSquare size={28} strokeWidth={1.7} />
-            <p>Select a conversation to read the thread</p>
+            <p>{t('Select a conversation to read it')}</p>
           </div>
         )}
       </div>

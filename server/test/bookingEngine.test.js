@@ -1,0 +1,362 @@
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
+import { afterBooking, runTurn } from '../src/whatsapp/bookingEngine.js';
+import { matchHosts } from '../src/whatsapp/hostMatch.js';
+import { extractFields } from '../src/whatsapp/slotExtract.js';
+import { detectLanguage } from '../src/whatsapp/lang.js';
+import { extractDate, extractTime } from '../src/utils/dateParse.js';
+
+const TODAY = '2026-09-24';
+
+// Mirrors the live host directory (names/departments only).
+const HOSTS = [
+  { id: 2, name: 'Naledi Kgosi', department: 'Human Resources', status: 'active' },
+  { id: 3, name: 'Tshepo Molefe', department: 'Finance', status: 'active' },
+  { id: 4, name: 'Botho Prince', department: 'Technology Planning', status: 'active' },
+  { id: 5, name: 'ASTRA', department: '—', status: 'active' },
+  { id: 8, name: 'Botho', department: '—', status: 'active' },
+  { id: 9, name: 'Waqas Naveed', department: 'AI/ML Egnineer', status: 'active' },
+  { id: 10, name: 'Hamza', department: 'food services', status: 'active' },
+];
+
+const HOSTS_WITH_PROCUREMENT = [
+  ...HOSTS,
+  { id: 11, name: 'Lesego Dintwa', department: 'Procurement', status: 'active' },
+];
+
+function chat(messages, { hosts = HOSTS, state = null } = {}) {
+  const log = [];
+  let current = state;
+  for (const text of messages) {
+    let { state: next, reply, actions } = runTurn(current, text, { hosts, today: TODAY });
+    for (const action of actions) {
+      if (action.type === 'book') {
+        const booked = afterBooking(
+          next,
+          { ok: true, ref: 'VMS-2026-000123', hostName: next.slots.hostName, date: next.slots.date, time: next.slots.time },
+          { hosts }
+        );
+        log.push({ text, reply: booked.reply, booked: { ...next.slots }, state: booked.state });
+        next = booked.state;
+        reply = null;
+      }
+      if (action.type === 'faq') reply = `[faq] ${action.followUp}`;
+      if (action.type === 'status') reply = `[status ${action.ref}]`;
+    }
+    if (reply !== null) log.push({ text, reply, state: next });
+    current = next;
+  }
+  return { log, state: current, replies: log.map((l) => l.reply) };
+}
+
+describe('real production chat lines', () => {
+  test('Procurement / Botho answers never repeat the host question', () => {
+    const { replies } = chat(['Hello', 'Michael Ntsima', 'BOTHO INNOVATIONS', 'Sales pitch', 'Procurement', 'Procurement', 'Botho']);
+    const hostQuestion = 'Who would you like to visit? Please share the host name or department.';
+    assert.equal(replies.filter((r) => r === hostQuestion).length, 1, replies.join('\n---\n'));
+    assert.match(replies[4], /don't have a host or department called "Procurement"/);
+    assert.match(replies[4], /1\. Naledi Kgosi \(Human Resources\)/);
+    assert.match(replies[5], /doesn't match anyone on the list/);
+    assert.match(replies[6], /Which date/);
+  });
+
+  test('screenshot message: comma list after the welcome fills name, company, purpose, date, time', () => {
+    const { replies, state } = chat(['Hello', 'Michael Ntsima, Botho Innovations, Sales Pitch, 25 Sept 2026, 10am']);
+    assert.equal(state.slots.name, 'Michael Ntsima');
+    assert.equal(state.slots.company, 'Botho Innovations');
+    assert.equal(state.slots.purpose, 'Sales Pitch');
+    assert.equal(state.slots.date, '2026-09-25');
+    assert.equal(state.slots.time, '10:00');
+    assert.equal(replies[1], 'Who would you like to visit? Please share the host name or department.');
+  });
+
+  test('Bug B: long Waqas sentence asks only for the host', () => {
+    const { state, replies } = chat([
+      'Hi',
+      'Waqas naveed from Astra innovations. I want to consult AI system want yo visit on 25 September at 3 pm',
+    ]);
+    assert.equal(state.slots.name, 'Waqas Naveed');
+    assert.equal(state.slots.company, 'Astra innovations');
+    assert.equal(state.slots.purpose, 'Consult AI system');
+    assert.equal(state.slots.date, '2026-09-25');
+    assert.equal(state.slots.time, '15:00');
+    assert.equal(state.slots.hostId, null);
+    assert.match(replies[1], /Who would you like to visit/);
+  });
+});
+
+describe('acceptance tests', () => {
+  test('T1 one-message booking', () => {
+    const { log } = chat([
+      'Hi',
+      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm',
+      'Yes',
+    ]);
+    assert.match(log[0].reply, /^Welcome to Botho Innovations Visitor Management System/);
+    assert.match(log[1].reply, /Please confirm your visit details/);
+    assert.match(log[1].reply, /Name: Waqas Naveed\nCompany: Astra\nPurpose: Consult the AI system\nHost: Hamza \(food services\)/);
+    assert.match(log[1].reply, /Date: Friday, 25 September 2026\nTime: 3:00 PM/);
+    assert.equal(log[2].booked.hostId, 10);
+    assert.match(log[2].reply, /Your visit request has been submitted\.\nReference: VMS-2026-000123/);
+  });
+
+  test('T2 department as host is accepted and moves on', () => {
+    const { replies, state } = chat(['Hi', 'Kagiso Sebina', 'Debswana', 'Supplier meeting', 'Procurement'], {
+      hosts: HOSTS_WITH_PROCUREMENT,
+    });
+    assert.equal(state.slots.hostId, 11);
+    assert.match(replies.at(-1), /Which date/);
+  });
+
+  test('T3 unknown department shows the list and the pick advances', () => {
+    const { replies, state } = chat(['Hi', 'Kagiso Sebina', 'Debswana', 'Supplier meeting', 'Sales pitch', '3']);
+    assert.match(replies[4], /don't have a host or department called "Sales pitch"/);
+    assert.equal(state.slots.hostId, 4);
+    assert.match(replies[5], /Which date/);
+  });
+
+  test('T4 step by step, each answer advances exactly one step', () => {
+    const { replies, state } = chat([
+      'Hi',
+      'Michael Ntsima',
+      'Botho Innovations',
+      'Technology Planning Meeting',
+      'Naledi',
+      '25 Sep',
+      '10am',
+      'yes',
+    ]);
+    assert.deepEqual(replies.slice(1, 7), [
+      'Which company are you visiting from?',
+      'What is the purpose of your visit?',
+      'Who would you like to visit? Please share the host name or department.',
+      'Which date would you like to visit? For example: 25 September, or tomorrow.',
+      'What time will you arrive? For example: 10am, or 15:00.',
+      replies[6],
+    ]);
+    assert.match(replies[6], /Host: Naledi Kgosi \(Human Resources\)/);
+    assert.match(replies[7], /submitted/);
+    assert.equal(state.stage, 'idle');
+  });
+
+  test('T5 Setswana end to end', () => {
+    const { replies, log } = chat([
+      'Dumela',
+      'Ke nna Kagiso Molefe, ke tswa kwa Debswana',
+      'Kopano ya thekiso',
+      'Ke batla go bona Tshepo',
+      'Kamoso',
+      'ka 10 mo mosong',
+      'Ee',
+    ]);
+    assert.match(replies[0], /^Re a go amogela mo Botho Innovations/);
+    assert.equal(replies[1], 'Maikaelelo a ketelo ya gago ke eng?');
+    assert.equal(replies[2], 'O batla go etela mang? Tsweetswee kwala leina la motho kgotsa la lefapha.');
+    assert.match(replies[3], /letlha lefe/);
+    assert.match(replies[4], /nako mang/);
+    assert.match(replies[5], /Tsweetswee tlhomamisa/);
+    assert.match(replies[5], /Letlha: Labotlhano, 25 Lwetse 2026\nNako: 10:00/);
+    assert.match(replies[6], /Kopo ya gago ya ketelo e rometswe/);
+    assert.equal(log.at(-1).booked.name, 'Kagiso Molefe');
+    assert.equal(log.at(-1).booked.company, 'Debswana');
+  });
+
+  test('T6 new booking after a completed one starts from clean slots', () => {
+    const first = chat(['Hi', 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm', 'Yes']);
+    const { state, replies } = chat(['Hi', 'Ali Raza'], { state: first.state });
+    assert.equal(state.slots.name, 'Ali Raza');
+    assert.equal(state.slots.company, '');
+    assert.equal(state.slots.date, '');
+    assert.equal(state.slots.time, '');
+    assert.equal(replies[1], 'Which company are you visiting from?');
+
+    const again = chat(['another booking'], { state: first.state });
+    assert.match(again.replies[0], /^Welcome/);
+    assert.equal(again.state.slots.name, '');
+  });
+});
+
+describe('guards', () => {
+  test('visitor cannot approve their own visit', () => {
+    const { replies } = chat(['Hi', 'approve']);
+    assert.match(replies[1], /can't be approved or rejected from this chat/);
+  });
+
+  test('off-topic programming requests are refused and the booking resumes', () => {
+    const { replies } = chat(['Hi', 'Michael Ntsima', 'write me C++ code for a calculator']);
+    assert.match(replies[2], /only help with visitor bookings/);
+    assert.match(replies[2], /Which company/);
+  });
+
+  test('a filled field is never overwritten outside confirmation', () => {
+    const { state } = chat(['Hi', 'Michael Ntsima', 'My name is Waqas']);
+    assert.equal(state.slots.name, 'Michael Ntsima');
+  });
+
+  test('confirmation accepts a correction and re-confirms', () => {
+    const { replies, state } = chat([
+      'Hi',
+      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm',
+      'change time to 11am',
+    ]);
+    assert.equal(state.slots.time, '11:00');
+    assert.match(replies[2], /Time: 11:00 AM/);
+  });
+
+  test('past dates are rejected with a clear message', () => {
+    const { replies } = chat(['Hi', 'Michael Ntsima', 'Botho Innovations', 'Meeting', 'Hamza', '2025-01-10']);
+    assert.match(replies.at(-1), /already passed/);
+  });
+
+  test('empty directory does not loop', () => {
+    const { replies } = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza'], { hosts: [] });
+    assert.match(replies.at(-1), /host directory has not been set up/);
+  });
+
+  test('media / empty message keeps the current question', () => {
+    const { replies } = chat(['Hi', 'Michael Ntsima', '']);
+    assert.match(replies[2], /only read text messages\.\n\nWhich company/);
+  });
+
+  test('host ambiguity is a numbered list, not a repeat', () => {
+    const { replies } = chat(['Hi', 'Michael Ntsima', 'Botho Innovations', 'Meeting', 'Prince Botho']);
+    assert.match(replies.at(-1), /Which date/);
+  });
+});
+
+describe('realistic variations', () => {
+  test('rich single sentence', () => {
+    const { state } = chat([
+      "Hi, I'm Thabo Kgari from Orange Botswana and I'd like to see Tshepo tomorrow at 9am for a contract review",
+    ]);
+    assert.equal(state.slots.name, 'Thabo Kgari');
+    assert.equal(state.slots.company, 'Orange Botswana');
+    assert.equal(state.slots.hostId, 3);
+    assert.equal(state.slots.date, '2026-09-25');
+    assert.equal(state.slots.time, '09:00');
+    assert.equal(state.slots.purpose, 'Contract review');
+    assert.equal(state.stage, 'confirm');
+  });
+
+  test('labelled lines', () => {
+    const { state } = chat(['Hi', 'Name: Neo Setlhare\nCompany: BPC\nPurpose: Meter audit\nHost: Finance\nDate: 30/09/2026\nTime: 14:30']);
+    assert.equal(state.slots.name, 'Neo Setlhare');
+    assert.equal(state.slots.company, 'BPC');
+    assert.equal(state.slots.hostId, 3);
+    assert.equal(state.slots.date, '2026-09-30');
+    assert.equal(state.slots.time, '14:30');
+  });
+
+  test('a question mid-flow is answered and the pending question is kept', () => {
+    const { log } = chat(['Hi', 'Michael Ntsima', 'Where is your office?']);
+    assert.equal(log[2].reply, '[faq] Which company are you visiting from?');
+    assert.equal(log[2].state.slots.name, 'Michael Ntsima');
+  });
+
+  test('status lookup by reference', () => {
+    const { replies } = chat(['VMS-2026-000123']);
+    assert.equal(replies[0], '[status VMS-2026-000123]');
+  });
+
+  test('saying no at confirmation, then correcting the date', () => {
+    const { replies, state } = chat([
+      'Hi',
+      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm',
+      'no',
+      'date 26 September',
+    ]);
+    assert.match(replies[2], /What would you like to change/);
+    assert.equal(state.slots.date, '2026-09-26');
+    assert.match(replies[3], /Please confirm/);
+  });
+
+  test('changing the host at confirmation', () => {
+    const { state } = chat([
+      'Hi',
+      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm',
+      'host Naledi',
+    ]);
+    assert.equal(state.slots.hostId, 2);
+    assert.equal(state.stage, 'confirm');
+  });
+
+  test('out-of-range pick re-shows the list with different wording', () => {
+    const { replies } = chat(['Hi', 'Michael', 'Botho Innovations', 'Meeting', 'Procurement', '99', '2']);
+    assert.match(replies[5], /doesn't match anyone on the list/);
+    assert.match(replies[6], /Which date/);
+  });
+
+  test('switching to Setswana mid-chat switches replies', () => {
+    const { replies } = chat(['Hi', 'Michael Ntsima', 'Ke tswa kwa Debswana']);
+    assert.equal(replies[2], 'Maikaelelo a ketelo ya gago ke eng?');
+  });
+
+  test('Setswana unknown host list', () => {
+    const { replies } = chat(['Dumela', 'Kagiso', 'Debswana', 'Kopano', 'Procurement']);
+    assert.match(replies.at(-1), /Ga ke na motho kgotsa lefapha le le bidiwang "Procurement"/);
+  });
+
+  test('thanks after booking does not restart the flow', () => {
+    const first = chat(['Hi', 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm', 'Yes']);
+    const { replies } = chat(['Thank you'], { state: first.state });
+    assert.match(replies[0], /You're welcome/);
+  });
+
+  test('no generic chatbot phrasing or markdown anywhere', () => {
+    const { replies } = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Sales pitch', '1', 'tomorrow', '10am', 'yes']);
+    for (const r of replies) {
+      assert.doesNotMatch(r, /how can i (assist|help) you/i);
+      assert.doesNotMatch(r, /\*|YYYY-MM-DD/);
+    }
+  });
+});
+
+describe('matchers', () => {
+  test('host matching', () => {
+    assert.deepEqual(matchHosts('Procurement', HOSTS), []);
+    assert.deepEqual(matchHosts('Sales pitch', HOSTS), []);
+    assert.deepEqual(matchHosts('Botho', HOSTS).map((h) => h.id), [8]);
+    assert.deepEqual(matchHosts('AI/ML', HOSTS).map((h) => h.id), [9]);
+    assert.deepEqual(matchHosts('food services', HOSTS).map((h) => h.id), [10]);
+    assert.deepEqual(matchHosts('the finance department', HOSTS).map((h) => h.id), [3]);
+    assert.deepEqual(matchHosts('finanace', HOSTS).map((h) => h.id), [3]);
+    assert.deepEqual(matchHosts('HR', HOSTS).map((h) => h.id), [2]);
+    assert.deepEqual(matchHosts('Procurement', HOSTS_WITH_PROCUREMENT).map((h) => h.id), [11]);
+  });
+
+  test('dates and times', () => {
+    assert.equal(extractDate('25 September', TODAY), '2026-09-25');
+    assert.equal(extractDate('25 Sept 2026', TODAY), '2026-09-25');
+    assert.equal(extractDate('September 30', TODAY), '2026-09-30');
+    assert.equal(extractDate('2026-09-25', TODAY), '2026-09-25');
+    assert.equal(extractDate('25/09/2026', TODAY), '2026-09-25');
+    assert.equal(extractDate('tomorrow', TODAY), '2026-09-25');
+    assert.equal(extractDate('kamoso', TODAY), '2026-09-25');
+    assert.equal(extractDate('on Monday', TODAY), '2026-09-28');
+    assert.equal(extractDate('10 January', TODAY), '2027-01-10');
+    assert.equal(extractDate('2025-01-10', TODAY), 'past');
+    assert.equal(extractTime('3 pm'), '15:00');
+    assert.equal(extractTime('3:00 PM'), '15:00');
+    assert.equal(extractTime('15:00'), '15:00');
+    assert.equal(extractTime('15h30'), '15:30');
+    assert.equal(extractTime('at 3'), '15:00');
+    assert.equal(extractTime('10 mo mosong'), '10:00');
+    assert.equal(extractTime('3', { bare: true }), '15:00');
+    assert.equal(extractTime('on 25 September'), null);
+  });
+
+  test('language detection', () => {
+    assert.equal(detectLanguage('Dumela'), 'tn');
+    assert.equal(detectLanguage('Ke batla go etela Tshepo kamoso'), 'tn');
+    assert.equal(detectLanguage('Hi, I want to visit Hamza'), 'en');
+    assert.equal(detectLanguage('Procurement'), null);
+    assert.equal(detectLanguage('Michael Ntsima'), null);
+  });
+
+  test('visitor sentence does not become the host', () => {
+    const found = extractFields('Waqas Naveed from Astra', { today: TODAY });
+    assert.equal(found.name, 'Waqas Naveed');
+    assert.equal(found.company, 'Astra');
+    assert.equal(found.host, undefined);
+  });
+});

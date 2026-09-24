@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Pencil, Plus, Trash2, UserCheck } from 'lucide-react';
 import api from '../api/client';
+import { useI18n } from '../i18n';
 
 const emptyForm = { name: '', department: '', phone: '' };
 
 export default function HostDirectory({ onToast }) {
+  const { t } = useI18n();
   const [hosts, setHosts] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
@@ -16,16 +18,12 @@ export default function HostDirectory({ onToast }) {
   }
 
   useEffect(() => {
-    load().catch(() => onToast?.('Could not load hosts', true));
+    load().catch(() => onToast?.(t('Could not load hosts'), true));
   }, []);
 
   function startEdit(host) {
     setEditingId(host.id);
-    setForm({
-      name: host.name || '',
-      department: host.department || host.dept || '',
-      phone: host.phone || '',
-    });
+    setForm({ name: host.name || '', department: host.department || host.dept || '', phone: host.phone || '' });
   }
 
   function cancelEdit() {
@@ -36,38 +34,34 @@ export default function HostDirectory({ onToast }) {
   async function save(e) {
     e?.preventDefault();
     if (!form.name.trim() || !form.department.trim() || !form.phone.trim()) {
-      onToast?.('Add name, department, and WhatsApp number', true);
+      onToast?.(t('Add the name, department, and personal WhatsApp number'), true);
       return;
     }
     setBusy(true);
     try {
-      const payload = {
-        name: form.name.trim(),
-        department: form.department.trim(),
-        phone: form.phone.trim(),
-      };
+      const payload = { name: form.name.trim(), department: form.department.trim(), phone: form.phone.trim() };
       if (editingId) await api.patch(`/host/staff/${editingId}`, payload);
       else await api.post('/host/staff', payload);
       cancelEdit();
       await load();
-      onToast?.(editingId ? 'Host updated' : 'Host saved');
+      onToast?.(editingId ? t('Host updated') : t('Host saved'));
     } catch (err) {
-      onToast?.(err.response?.data?.error || 'Could not save host', true);
+      onToast?.(err.response?.data?.error || t('Could not save host'), true);
     } finally {
       setBusy(false);
     }
   }
 
   async function remove(host) {
-    if (!window.confirm(`Remove ${host.name}? Visitors will no longer be able to book this host.`)) return;
+    if (!window.confirm(t('Remove {name}? Visitors will no longer be able to book this host.', { name: host.name }))) return;
     setBusy(true);
     try {
       await api.delete(`/host/staff/${host.id}`);
       if (editingId === host.id) cancelEdit();
       await load();
-      onToast?.('Host removed');
+      onToast?.(t('Host removed'));
     } catch (err) {
-      onToast?.(err.response?.data?.error || 'Could not delete host', true);
+      onToast?.(err.response?.data?.error || t('Could not delete host'), true);
     } finally {
       setBusy(false);
     }
@@ -81,50 +75,40 @@ export default function HostDirectory({ onToast }) {
             <UserCheck size={16} strokeWidth={2} />
           </span>
           <div>
-            <h3>Company hosts</h3>
-            <p>Save each host&apos;s personal WhatsApp number. The company number sends APPROVE / REJECT there — do not use the company number as the host phone.</p>
+            <h3>{t('Host directory')}</h3>
+            <p>
+              {t(
+                'The WhatsApp assistant only books people listed here. Each host gets a WhatsApp heads-up on their personal number and approves or rejects in this portal.'
+              )}
+            </p>
           </div>
         </div>
-        <span className="ap-badge active">{hosts.length} hosts</span>
+        <span className="ap-badge active">{t('{count} hosts', { count: hosts.length })}</span>
       </div>
 
       <form className="kb-body" onSubmit={save}>
         <div className="ap-profile-grid" style={{ padding: 0 }}>
           <div className="ap-f-field">
-            <label htmlFor="hostName">Host name</label>
-            <input
-              id="hostName"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              placeholder="Boikarabelo Ramaretlwa"
-            />
+            <label htmlFor="hostName">{t('Host name')}</label>
+            <input id="hostName" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Boikarabelo Ramaretlwa" />
           </div>
           <div className="ap-f-field">
-            <label htmlFor="hostDept">Department / info</label>
-            <input
-              id="hostDept"
-              value={form.department}
-              onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
-              placeholder="Technology Planning"
-            />
+            <label htmlFor="hostDept">{t('Department')}</label>
+            <input id="hostDept" value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))} placeholder="Technology Planning" />
           </div>
           <div className="ap-f-field">
-            <label htmlFor="hostPhone">Personal WhatsApp number</label>
-            <input
-              id="hostPhone"
-              value={form.phone}
-              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-              placeholder="+267 71 000 001"
-            />
+            <label htmlFor="hostPhone">{t('Personal WhatsApp number')}</label>
+            <input id="hostPhone" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="+267 71 000 001" />
           </div>
         </div>
+        <p className="ap-hint">{t('Use the host’s own number, not the company WhatsApp number.')}</p>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button className="ap-btn ap-btn-teal" type="submit" disabled={busy}>
-            <Plus size={14} /> {editingId ? 'Update host' : 'Save host'}
+            <Plus size={14} /> {editingId ? t('Update host') : t('Save host')}
           </button>
           {editingId ? (
             <button className="ap-btn ap-btn-ghost" type="button" disabled={busy} onClick={cancelEdit}>
-              Cancel
+              {t('Cancel')}
             </button>
           ) : null}
         </div>
@@ -134,10 +118,10 @@ export default function HostDirectory({ onToast }) {
         <table className="ap-table">
           <thead>
             <tr>
-              <th>Host</th>
-              <th>Department</th>
+              <th>{t('Host')}</th>
+              <th>{t('Department')}</th>
               <th>WhatsApp</th>
-              <th>Status</th>
+              <th>{t('Status')}</th>
               <th></th>
             </tr>
           </thead>
@@ -146,17 +130,21 @@ export default function HostDirectory({ onToast }) {
               hosts.map((h) => (
                 <tr key={h.id}>
                   <td className="ap-cell-main">{h.name}</td>
-                  <td>{h.department || h.dept || '—'}</td>
-                  <td>{h.phone ? (String(h.phone).startsWith('+') ? h.phone : `+${String(h.phone).replace(/\D/g, '')}`) : '—'}</td>
+                  <td>{h.department && h.department !== '—' ? h.department : '—'}</td>
+                  <td className="ap-nowrap">
+                    {h.phone ? (String(h.phone).startsWith('+') ? h.phone : `+${String(h.phone).replace(/\D/g, '')}`) : '—'}
+                  </td>
                   <td>
-                    <span className={'ap-badge ' + (h.status === 'active' ? 'approved' : 'rejected')}>{h.status}</span>
+                    <span className={'ap-badge ' + (h.status === 'active' ? 'approved' : 'rejected')}>
+                      {h.status === 'active' ? t('Active') : t('Blocked')}
+                    </span>
                   </td>
                   <td>
                     <div className="row-actions">
                       <button className="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={busy} onClick={() => startEdit(h)}>
-                        <Pencil size={13} /> Edit
+                        <Pencil size={13} /> {t('Edit')}
                       </button>
-                      <button className="ap-btn ap-btn-danger ap-btn-sm" type="button" disabled={busy} onClick={() => remove(h)}>
+                      <button className="ap-btn ap-btn-danger ap-btn-sm" type="button" disabled={busy} onClick={() => remove(h)} aria-label={t('Delete')}>
                         <Trash2 size={13} />
                       </button>
                     </div>
@@ -166,7 +154,7 @@ export default function HostDirectory({ onToast }) {
             ) : (
               <tr>
                 <td colSpan="5" className="ap-empty">
-                  No hosts yet. Add the first staff record above.
+                  {t('No hosts yet. Add the first person above.')}
                 </td>
               </tr>
             )}

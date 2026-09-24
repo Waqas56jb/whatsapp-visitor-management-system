@@ -3,6 +3,7 @@ import { Eye, EyeOff, Loader2, Lock, QrCode, ShieldCheck, Sparkles, User, Users 
 import { toast } from 'react-toastify';
 import ScreenLoader from './ScreenLoader';
 import api, { setAdminToken } from '../api/client';
+import { LanguageSwitch, useI18n } from '../i18n';
 
 function BrandMark() {
   return (
@@ -21,6 +22,7 @@ function BrandMark() {
 }
 
 export default function LoginScreen({ hidden, onSuccess }) {
+  const { t } = useI18n();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -35,23 +37,22 @@ export default function LoginScreen({ hidden, onSuccess }) {
   async function doAdminLogin(e) {
     e?.preventDefault();
     const u = username.trim();
-    const p = password;
-    if (!u || !p) {
-      toast.error('Enter your username and password.');
+    if (!u || !password) {
+      toast.error(t('Enter your username and password.'));
       return;
     }
     setError('');
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/admin/login', { username: u, password: p });
+      const { data } = await api.post('/auth/admin/login', { username: u, password });
       setAdminToken(data.token);
       sessionStorage.setItem('botho_admin_in', '1');
-      toast.success('Welcome back');
+      toast.success(t('Welcome back'));
       onSuccess();
     } catch (err) {
       const msg =
         err.response?.data?.error ||
-        (err.request && !err.response ? 'Cannot reach the server. Check your connection.' : 'Incorrect username or password.');
+        (err.request && !err.response ? t('Cannot reach the server. Check your connection.') : t('Incorrect username or password.'));
       setError(msg);
       toast.error(msg);
     } finally {
@@ -61,9 +62,13 @@ export default function LoginScreen({ hidden, onSuccess }) {
 
   return (
     <div id="loginScreen" className={hidden ? 'is-hidden' : ''} aria-hidden={hidden}>
-      <ScreenLoader show={loading} label="Signing in…" />
+      <ScreenLoader show={loading} label={t('Signing in…')} />
       <div className="auth-orb auth-orb-a" />
       <div className="auth-orb auth-orb-b" />
+      <div className="auth-topbar">
+        <span />
+        <LanguageSwitch className="lang-switch-dark" />
+      </div>
       <div className="auth-shell">
         <aside className="auth-brand">
           <div className="auth-brand-top">
@@ -71,19 +76,19 @@ export default function LoginScreen({ hidden, onSuccess }) {
             <span>Botho Innovations</span>
           </div>
           <h2>
-            Secure visitor access,
-            <em> beautifully controlled.</em>
+            {t('Secure visitor access,')}
+            <em> {t('fully under control.')}</em>
           </h2>
-          <p>Approve visits, issue QR passes, and watch every gate event from one command center.</p>
+          <p>{t('Manage accounts, hosts, visits, and every gate event from one admin panel.')}</p>
           <ul className="auth-points">
             <li>
-              <ShieldCheck size={18} strokeWidth={2} /> Live host approvals
+              <ShieldCheck size={18} strokeWidth={2} /> {t('Accounts and roles')}
             </li>
             <li>
-              <QrCode size={18} strokeWidth={2} /> QR at the gate
+              <QrCode size={18} strokeWidth={2} /> {t('QR passes and gate checks')}
             </li>
             <li>
-              <Users size={18} strokeWidth={2} /> Full visitor audit trail
+              <Users size={18} strokeWidth={2} /> {t('Full visitor audit trail')}
             </li>
           </ul>
         </aside>
@@ -91,19 +96,19 @@ export default function LoginScreen({ hidden, onSuccess }) {
           <form className="auth-card" onSubmit={doAdminLogin}>
             <div className="auth-card-head">
               <span className="auth-chip">
-                <Sparkles size={14} strokeWidth={2.2} /> Admin access
+                <Sparkles size={14} strokeWidth={2.2} /> {t('Admin Panel')}
               </span>
-              <h1>Sign in</h1>
-              <p>Use the credentials issued for this organisation.</p>
+              <h1>{t('Sign in')}</h1>
+              <p>{t('Use the credentials issued for this organisation.')}</p>
             </div>
             <label className="auth-field">
-              <span>Username</span>
+              <span>{t('Username')}</span>
               <div className="auth-input">
                 <User size={18} strokeWidth={1.9} />
                 <input
                   ref={userRef}
                   type="text"
-                  placeholder="Enter username"
+                  placeholder={t('Enter username')}
                   autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -111,32 +116,37 @@ export default function LoginScreen({ hidden, onSuccess }) {
               </div>
             </label>
             <label className="auth-field">
-              <span>Password</span>
+              <span>{t('Password')}</span>
               <div className="auth-input">
                 <Lock size={18} strokeWidth={1.9} />
                 <input
                   type={showPass ? 'text' : 'password'}
-                  placeholder="Enter password"
+                  placeholder={t('Enter password')}
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
-                <button type="button" className="auth-eye" onClick={() => setShowPass((v) => !v)} aria-label={showPass ? 'Hide password' : 'Show password'}>
+                <button
+                  type="button"
+                  className="auth-eye"
+                  onClick={() => setShowPass((v) => !v)}
+                  aria-label={showPass ? t('Hide password') : t('Show password')}
+                >
                   {showPass ? <EyeOff size={18} strokeWidth={1.9} /> : <Eye size={18} strokeWidth={1.9} />}
                 </button>
               </div>
             </label>
             <button className="auth-btn violet" type="submit" disabled={loading}>
               {loading ? <Loader2 size={18} className="spin" /> : <ShieldCheck size={18} strokeWidth={2.2} />}
-              {loading ? 'Signing in…' : 'Sign in'}
+              {loading ? t('Signing in…') : t('Sign in')}
             </button>
             {error ? <p className="auth-error">{error}</p> : null}
             <div className="auth-demo">
-              <b>Test login</b>
+              <b>{t('Test login')}</b>
               <p>
-                Username: <code>admin</code>
+                {t('Username')}: <code>admin</code>
                 <br />
-                Password: <code>admin123</code>
+                {t('Password')}: <code>admin123</code>
               </p>
               <button
                 type="button"
@@ -147,7 +157,7 @@ export default function LoginScreen({ hidden, onSuccess }) {
                   setError('');
                 }}
               >
-                Fill test credentials
+                {t('Fill test credentials')}
               </button>
             </div>
           </form>

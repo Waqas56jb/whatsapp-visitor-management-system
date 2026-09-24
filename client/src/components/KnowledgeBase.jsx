@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, FileText, Globe, HelpCircle, Plus, RotateCcw, Scale, Trash2, Upload } from 'lucide-react';
+import { BookOpen, FileText, Globe, HelpCircle, Lock, Plus, Scale, Trash2, Upload } from 'lucide-react';
 import api from '../api/client';
+import { useI18n } from '../i18n';
 
-const DEFAULT_GREETING =
-  'Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).';
+// Must match the fixed welcome sent by the server (server/src/whatsapp/messages.js).
+const WELCOME = {
+  en: 'Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).',
+  tn: 'Re a go amogela mo Botho Innovations Visitor Management System. Tsweetswee re romelele dintlha tsa gago (Maina, Kompone, Maikaelelo, Letlha la ketelo, Nako).',
+};
 const DEFAULT_INSTRUCTION =
-  'Always ask who they are visiting (host name or department). Notify only that saved host. Answer only from this knowledge base. Never invent services, staff, or prices.';
+  'Answer only from this knowledge base. Never invent services, staff, or prices. Office hours are 8am–5pm.';
 
 const TABS = [
-  { id: 'voice', label: 'Voice', icon: BookOpen },
+  { id: 'voice', label: 'Welcome & instructions', icon: BookOpen },
   { id: 'rules', label: 'Rules', icon: Scale },
   { id: 'files', label: 'Files', icon: FileText },
   { id: 'web', label: 'Website', icon: Globe },
@@ -16,13 +20,14 @@ const TABS = [
 ];
 
 function ItemRow({ title, text, onRemove, busy }) {
+  const { t } = useI18n();
   return (
     <div className="kb-item">
       <div>
         {title ? <b>{title}</b> : null}
         <p>{text}</p>
       </div>
-      <button className="ap-btn ap-btn-danger ap-btn-sm" type="button" disabled={busy} onClick={onRemove} aria-label="Delete">
+      <button className="ap-btn ap-btn-danger ap-btn-sm" type="button" disabled={busy} onClick={onRemove} aria-label={t('Delete')}>
         <Trash2 size={13} />
       </button>
     </div>
@@ -30,9 +35,9 @@ function ItemRow({ title, text, onRemove, busy }) {
 }
 
 export default function KnowledgeBase({ onToast }) {
+  const { t } = useI18n();
   const [tab, setTab] = useState('voice');
   const [items, setItems] = useState([]);
-  const [greeting, setGreeting] = useState(DEFAULT_GREETING);
   const [instruction, setInstruction] = useState(DEFAULT_INSTRUCTION);
   const [rule, setRule] = useState('');
   const [note, setNote] = useState('');
@@ -43,7 +48,6 @@ export default function KnowledgeBase({ onToast }) {
   const [drag, setDrag] = useState(false);
   const fileRef = useRef(null);
 
-  const greetingRow = items.find((i) => i.kind === 'greeting');
   const instructionRow = items.find((i) => i.kind === 'instruction');
   const rules = items.filter((i) => i.kind === 'rule');
   const faqs = items.filter((i) => i.kind === 'qa');
@@ -55,27 +59,26 @@ export default function KnowledgeBase({ onToast }) {
     const { data } = await api.get('/host/knowledge');
     const rows = Array.isArray(data) ? data : [];
     setItems(rows);
-    setGreeting(rows.find((i) => i.kind === 'greeting')?.answer || DEFAULT_GREETING);
     setInstruction(rows.find((i) => i.kind === 'instruction')?.answer || DEFAULT_INSTRUCTION);
   }
 
   useEffect(() => {
-    load().catch(() => onToast?.('Could not load knowledge base', true));
+    load().catch(() => onToast?.(t('Could not load the knowledge base'), true));
   }, []);
 
-  async function saveKind(kind, answer, existing, extras = {}) {
-    if (!String(answer || '').trim()) {
-      onToast?.('This field cannot be empty', true);
+  async function saveInstruction() {
+    if (!instruction.trim()) {
+      onToast?.(t('This field cannot be empty'), true);
       return;
     }
     setBusy(true);
     try {
-      if (existing) await api.patch(`/host/knowledge/${existing.id}`, { kind, answer: answer.trim(), ...extras });
-      else await api.post('/host/knowledge', { kind, title: extras.title || kind, answer: answer.trim(), ...extras });
+      if (instructionRow) await api.patch(`/host/knowledge/${instructionRow.id}`, { kind: 'instruction', answer: instruction.trim() });
+      else await api.post('/host/knowledge', { kind: 'instruction', title: 'instruction', answer: instruction.trim() });
       await load();
-      onToast?.('Saved to the company knowledge base');
+      onToast?.(t('Saved to the knowledge base'));
     } catch (err) {
-      onToast?.(err.response?.data?.error || 'Could not save', true);
+      onToast?.(err.response?.data?.error || t('Could not save'), true);
     } finally {
       setBusy(false);
     }
@@ -87,8 +90,10 @@ export default function KnowledgeBase({ onToast }) {
       await api.post('/host/knowledge', payload);
       await load();
       onToast?.(success);
+      return true;
     } catch (err) {
-      onToast?.(err.response?.data?.error || 'Could not save', true);
+      onToast?.(err.response?.data?.error || t('Could not save'), true);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -96,35 +101,34 @@ export default function KnowledgeBase({ onToast }) {
 
   async function addFaq() {
     if (!q.trim() || !a.trim()) {
-      onToast?.('Add both a question and an answer', true);
+      onToast?.(t('Add both a question and an answer'), true);
       return;
     }
-    await addItem({ kind: 'qa', title: q.trim(), question: q.trim(), answer: a.trim() }, 'Question saved');
-    setQ('');
-    setA('');
+    if (await addItem({ kind: 'qa', title: q.trim(), question: q.trim(), answer: a.trim() }, t('Question saved'))) {
+      setQ('');
+      setA('');
+    }
   }
 
   async function addRule() {
     if (!rule.trim()) {
-      onToast?.('Write a business rule first', true);
+      onToast?.(t('Write a rule first'), true);
       return;
     }
-    await addItem({ kind: 'rule', title: 'Business rule', answer: rule.trim() }, 'Rule saved');
-    setRule('');
+    if (await addItem({ kind: 'rule', title: 'Business rule', answer: rule.trim() }, t('Rule saved'))) setRule('');
   }
 
   async function addNote() {
     if (!note.trim()) {
-      onToast?.('Paste the service text first', true);
+      onToast?.(t('Paste some text first'), true);
       return;
     }
-    await addItem({ kind: 'text', title: 'Service notes', answer: note.trim() }, 'Text saved');
-    setNote('');
+    if (await addItem({ kind: 'text', title: 'Service notes', answer: note.trim() }, t('Notes saved'))) setNote('');
   }
 
   async function addWebsite() {
     if (!url.trim()) {
-      onToast?.('Paste a website link', true);
+      onToast?.(t('Paste a website link'), true);
       return;
     }
     setBusy(true);
@@ -132,9 +136,9 @@ export default function KnowledgeBase({ onToast }) {
       await api.post('/host/knowledge/website', { url: url.trim() });
       setUrl('');
       await load();
-      onToast?.('Website imported into the knowledge base');
+      onToast?.(t('Website imported'));
     } catch (err) {
-      onToast?.(err.response?.data?.error || 'Could not import that link', true);
+      onToast?.(err.response?.data?.error || t('Could not import that link'), true);
     } finally {
       setBusy(false);
     }
@@ -148,9 +152,9 @@ export default function KnowledgeBase({ onToast }) {
     try {
       await api.post('/host/knowledge/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await load();
-      onToast?.(`${file.name} stored in the knowledge base`);
+      onToast?.(t('{name} added to the knowledge base', { name: file.name }));
     } catch (err) {
-      onToast?.(err.response?.data?.error || 'Could not read that file', true);
+      onToast?.(err.response?.data?.error || t('Could not read that file'), true);
     } finally {
       setBusy(false);
     }
@@ -162,7 +166,7 @@ export default function KnowledgeBase({ onToast }) {
       await api.delete(`/host/knowledge/${id}`);
       await load();
     } catch {
-      onToast?.('Could not delete', true);
+      onToast?.(t('Could not delete'), true);
     } finally {
       setBusy(false);
     }
@@ -176,11 +180,15 @@ export default function KnowledgeBase({ onToast }) {
             <BookOpen size={16} strokeWidth={2} />
           </span>
           <div>
-            <h3>Company knowledge</h3>
-            <p>Train the visitor agent with your voice, rules, files, and FAQs. It answers only from this library.</p>
+            <h3>{t('Company knowledge')}</h3>
+            <p>
+              {t(
+                'Facts the WhatsApp assistant can use to answer visitor questions (hours, address, parking, rules). Bookings are always collected step by step.'
+              )}
+            </p>
           </div>
         </div>
-        <span className="ap-badge active">{trained} sources</span>
+        <span className="ap-badge active">{t('{count} sources', { count: trained })}</span>
       </div>
 
       <div className="kb-tabs" role="tablist">
@@ -196,7 +204,7 @@ export default function KnowledgeBase({ onToast }) {
               onClick={() => setTab(item.id)}
             >
               <Icon size={15} />
-              {item.label}
+              {t(item.label)}
             </button>
           );
         })}
@@ -204,25 +212,28 @@ export default function KnowledgeBase({ onToast }) {
 
       {tab === 'voice' ? (
         <div className="kb-pane">
-          <div className="ap-f-field">
-            <label htmlFor="kbGreeting">Welcome message</label>
-            <textarea id="kbGreeting" rows={3} value={greeting} onChange={(e) => setGreeting(e.target.value)} />
+          <div className="kb-fixed">
+            <div className="kb-fixed-head">
+              <Lock size={14} />
+              <b>{t('Official welcome message')}</b>
+              <span>{t('Fixed — sent once when a visitor greets the company WhatsApp')}</span>
+            </div>
+            <div className="kb-fixed-row">
+              <em>English</em>
+              <p>{WELCOME.en}</p>
+            </div>
+            <div className="kb-fixed-row">
+              <em>Setswana</em>
+              <p>{WELCOME.tn}</p>
+            </div>
           </div>
-          <div className="kb-actions">
-            <button className="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={busy} onClick={() => { setGreeting(DEFAULT_GREETING); setInstruction(DEFAULT_INSTRUCTION); onToast?.('Default text restored. Save to apply.'); }}>
-              <RotateCcw size={14} /> Reset
-            </button>
-            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={() => saveKind('greeting', greeting, greetingRow)}>
-              Save greeting
-            </button>
-          </div>
           <div className="ap-f-field">
-            <label htmlFor="kbInstruction">Agent instructions</label>
+            <label htmlFor="kbInstruction">{t('Assistant instructions')}</label>
             <textarea id="kbInstruction" rows={3} value={instruction} onChange={(e) => setInstruction(e.target.value)} />
           </div>
           <div className="kb-actions">
-            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={() => saveKind('instruction', instruction, instructionRow)}>
-              Save instructions
+            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={saveInstruction}>
+              {t('Save instructions')}
             </button>
           </div>
         </div>
@@ -231,19 +242,25 @@ export default function KnowledgeBase({ onToast }) {
       {tab === 'rules' ? (
         <div className="kb-pane">
           <div className="ap-f-field">
-            <label htmlFor="kbRule">Business rule</label>
-            <textarea id="kbRule" rows={3} value={rule} onChange={(e) => setRule(e.target.value)} placeholder="Office hours are 8am–5pm. Visitors must be approved before entry." />
+            <label htmlFor="kbRule">{t('Rule')}</label>
+            <textarea
+              id="kbRule"
+              rows={3}
+              value={rule}
+              onChange={(e) => setRule(e.target.value)}
+              placeholder={t('Office hours are 8am–5pm. Visitors must be approved before entry.')}
+            />
           </div>
           <div className="kb-actions">
             <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addRule}>
-              <Plus size={14} /> Add rule
+              <Plus size={14} /> {t('Add rule')}
             </button>
           </div>
           <div className="kb-items">
             {rules.length ? (
               rules.map((item) => <ItemRow key={item.id} text={item.answer} busy={busy} onRemove={() => remove(item.id)} />)
             ) : (
-              <p className="kb-empty">No rules yet. Add visiting hours, dress code, or what the agent must never say.</p>
+              <p className="kb-empty">{t('No rules yet. Add visiting hours, ID requirements, or dress code.')}</p>
             )}
           </div>
         </div>
@@ -254,36 +271,55 @@ export default function KnowledgeBase({ onToast }) {
           <button
             type="button"
             className={'kb-drop' + (drag ? ' over' : '')}
-            onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDrag(true);
+            }}
             onDragLeave={() => setDrag(false)}
-            onDrop={(e) => { e.preventDefault(); setDrag(false); uploadFile(e.dataTransfer.files?.[0]); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDrag(false);
+              uploadFile(e.dataTransfer.files?.[0]);
+            }}
             onClick={() => fileRef.current?.click()}
           >
             <span className="ap-panel-ic">
               <Upload size={16} />
             </span>
             <div>
-              <b>Upload PDF, Word, or text</b>
-              <p>Drop a file here or browse · max 8 MB</p>
+              <b>{t('Upload PDF, Word, or text')}</b>
+              <p>{t('Drop a file here or browse · max 8 MB')}</p>
             </div>
-            <input ref={fileRef} type="file" hidden accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain" onChange={(e) => uploadFile(e.target.files?.[0])} />
+            <input
+              ref={fileRef}
+              type="file"
+              hidden
+              accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain"
+              onChange={(e) => uploadFile(e.target.files?.[0])}
+            />
           </button>
           <div className="ap-f-field">
-            <label htmlFor="kbNote">Or paste service notes</label>
-            <textarea id="kbNote" rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Describe your services, products, or visitor process…" />
+            <label htmlFor="kbNote">{t('Or paste text')}</label>
+            <textarea
+              id="kbNote"
+              rows={3}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={t('Describe your services, directions, or visitor process…')}
+            />
           </div>
           <div className="kb-actions">
             <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addNote}>
-              <Plus size={14} /> Save notes
+              <Plus size={14} /> {t('Save text')}
             </button>
           </div>
           <div className="kb-items">
             {documents.length ? (
               documents.map((item) => (
-                <ItemRow key={item.id} title={item.title || 'Document'} text={item.preview || item.answer} busy={busy} onRemove={() => remove(item.id)} />
+                <ItemRow key={item.id} title={item.title || t('Document')} text={item.preview || item.answer} busy={busy} onRemove={() => remove(item.id)} />
               ))
             ) : (
-              <p className="kb-empty">No documents yet. Upload a brochure or paste service text.</p>
+              <p className="kb-empty">{t('No documents yet. Upload a brochure or paste text.')}</p>
             )}
           </div>
         </div>
@@ -292,21 +328,21 @@ export default function KnowledgeBase({ onToast }) {
       {tab === 'web' ? (
         <div className="kb-pane">
           <div className="ap-f-field">
-            <label htmlFor="kbUrl">Website URL</label>
+            <label htmlFor="kbUrl">{t('Website link')}</label>
             <input id="kbUrl" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://bothoinnovations.com" />
           </div>
           <div className="kb-actions">
             <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addWebsite}>
-              Import page
+              {t('Import page')}
             </button>
           </div>
           <div className="kb-items">
             {websites.length ? (
               websites.map((item) => (
-                <ItemRow key={item.id} title={item.title || 'Website'} text={item.question} busy={busy} onRemove={() => remove(item.id)} />
+                <ItemRow key={item.id} title={item.title || t('Website')} text={item.question} busy={busy} onRemove={() => remove(item.id)} />
               ))
             ) : (
-              <p className="kb-empty">No websites yet. Import a public page about your services.</p>
+              <p className="kb-empty">{t('No websites yet. Import a public page about the company.')}</p>
             )}
           </div>
         </div>
@@ -316,17 +352,17 @@ export default function KnowledgeBase({ onToast }) {
         <div className="kb-pane">
           <div className="kb-faq-grid">
             <div className="ap-f-field">
-              <label htmlFor="kbQ">Question</label>
-              <input id="kbQ" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Where should visitors park?" />
+              <label htmlFor="kbQ">{t('Question')}</label>
+              <input id="kbQ" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('Where should visitors park?')} />
             </div>
             <div className="ap-f-field">
-              <label htmlFor="kbA">Answer</label>
-              <textarea id="kbA" rows={2} value={a} onChange={(e) => setA(e.target.value)} placeholder="Visitor parking is at the basement." />
+              <label htmlFor="kbA">{t('Answer')}</label>
+              <textarea id="kbA" rows={2} value={a} onChange={(e) => setA(e.target.value)} placeholder={t('Visitor parking is in the basement.')} />
             </div>
           </div>
           <div className="kb-actions">
             <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addFaq}>
-              <Plus size={14} /> Add question
+              <Plus size={14} /> {t('Add question')}
             </button>
           </div>
           <div className="kb-items">
@@ -335,7 +371,7 @@ export default function KnowledgeBase({ onToast }) {
                 <ItemRow key={item.id} title={item.question || item.title} text={item.answer} busy={busy} onRemove={() => remove(item.id)} />
               ))
             ) : (
-              <p className="kb-empty">No questions yet. Add short facts the agent can quote exactly.</p>
+              <p className="kb-empty">{t('No questions yet. Add short facts the assistant can quote.')}</p>
             )}
           </div>
         </div>

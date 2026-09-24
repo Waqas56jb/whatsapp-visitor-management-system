@@ -18,7 +18,6 @@ import {
   QrCode,
   Settings,
   ShieldCheck,
-  Sparkles,
   UserCheck,
   Users,
   X,
@@ -31,27 +30,31 @@ import ScreenLoader from './ScreenLoader';
 import WhatsAppLink from './WhatsAppLink';
 import { initials } from '../lib/db';
 import api, { setClientToken } from '../api/client';
+import { LanguageSwitch, useI18n } from '../i18n';
 
-const titles = {
-  overview: ['Overview', 'Welcome back'],
-  requests: ['Visit requests', 'Approve or reject bookings sent to you'],
-  conversations: ['Conversations', 'WhatsApp threads for your visitors'],
-  agent: ['AI Agent', 'Dashboard assistant — approve or review visits'],
-  whatsapp: ['Please scan company number', 'One company WhatsApp shared by every client account'],
-  hosts: ['Company hosts', 'Manually save host name, WhatsApp, and department'],
-  knowledge: ['Knowledge base', 'Train the company agent with files, links, and rules'],
-  passes: ['My passes', 'Active QR passes for your approved visitors'],
-  history: ['History', 'Everyone who has visited you'],
-  notifications: ['Notifications', 'Recent updates'],
-  profile: ['Profile', 'Your account details'],
-};
+const VIEWS = [
+  { id: 'overview', icon: LayoutDashboard, label: 'Overview', sub: 'Today at a glance' },
+  { id: 'requests', icon: ClipboardList, label: 'Visit requests', sub: 'Approve or reject every company visit request' },
+  { id: 'conversations', icon: MessagesSquare, label: 'Conversations', sub: 'WhatsApp threads with visitors' },
+  { id: 'agent', icon: Bot, label: 'AI Agent', sub: 'Ask about visitors, or approve and reject requests' },
+  { id: 'whatsapp', icon: QrCode, label: 'WhatsApp', sub: 'One company WhatsApp number for all visitors' },
+  { id: 'hosts', icon: UserCheck, label: 'Hosts', sub: 'People and departments visitors can book' },
+  { id: 'knowledge', icon: BookOpen, label: 'Knowledge base', sub: 'Company facts the WhatsApp assistant can answer from' },
+  { id: 'passes', icon: QrCode, label: 'Passes', sub: 'Active QR passes for approved visitors' },
+  { id: 'history', icon: History, label: 'History', sub: 'Every visit on record' },
+  { id: 'notifications', icon: Bell, label: 'Notifications', sub: 'Recent activity' },
+  { id: 'profile', icon: Settings, label: 'Profile', sub: 'Your account details' },
+];
+
+const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected', used: 'Checked in', blocked: 'Blocked' };
 
 function Badge({ status }) {
-  const Icon = status === 'approved' ? Check : status === 'pending' ? Clock : X;
+  const { t } = useI18n();
+  const Icon = status === 'approved' || status === 'used' ? Check : status === 'pending' ? Clock : X;
   return (
     <span className={`ap-badge ${status}`}>
       <Icon size={11} strokeWidth={2.6} />
-      {status}
+      {t(STATUS_LABEL[status] || status)}
     </span>
   );
 }
@@ -92,24 +95,48 @@ function EmptyState({ icon: Icon, children }) {
   );
 }
 
-function ReqCard({ v, onDecide }) {
+function useFormatters() {
+  const { locale } = useI18n();
+  return {
+    date: (value) => {
+      if (!value) return '—';
+      const d = new Date(`${String(value).slice(0, 10)}T12:00:00`);
+      return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
+    },
+  };
+}
+
+function VisitMeta({ v }) {
+  const { t } = useI18n();
+  const fmt = useFormatters();
+  return (
+    <span>
+      {v.company ? `${v.company} · ` : ''}
+      {t('Host')}: {v.host}
+      {v.hostDepartment && v.hostDepartment !== '—' ? ` (${v.hostDepartment})` : ''}
+      <br />
+      {v.purpose} · {fmt.date(v.date)} · {v.time} · {v.ref}
+    </span>
+  );
+}
+
+function ReqCard({ v, onDecide, busy }) {
+  const { t } = useI18n();
   return (
     <div className="ap-req-card">
       <div className="ap-row-flex">
         <div className="ap-avatar-sm">{initials(v.visitor)}</div>
         <div className="ap-req-info">
           <b>{v.visitor}</b>
-          <span>
-            {v.purpose} · {v.date} at {v.time} · {v.ref}
-          </span>
+          <VisitMeta v={v} />
         </div>
       </div>
       <div className="ap-req-actions">
-        <button className="ap-btn ap-btn-sm ap-btn-teal" onClick={() => onDecide(v.id, 'approved')}>
-          <Check size={13} strokeWidth={2.5} /> Approve
+        <button className="ap-btn ap-btn-sm ap-btn-teal" disabled={busy} onClick={() => onDecide(v.id, 'approved')}>
+          <Check size={13} strokeWidth={2.5} /> {t('Approve')}
         </button>
-        <button className="ap-btn ap-btn-sm ap-btn-danger" onClick={() => onDecide(v.id, 'rejected')}>
-          <X size={13} strokeWidth={2.5} /> Reject
+        <button className="ap-btn ap-btn-sm ap-btn-danger" disabled={busy} onClick={() => onDecide(v.id, 'rejected')}>
+          <X size={13} strokeWidth={2.5} /> {t('Reject')}
         </button>
       </div>
     </div>
@@ -117,46 +144,49 @@ function ReqCard({ v, onDecide }) {
 }
 
 export default function Portal({ on, currentUser, onBackToSite, onToast }) {
+  const { t, locale } = useI18n();
+  const fmt = useFormatters();
   const [view, setView] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [visits, setVisits] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [profile, setProfile] = useState(null);
   const [pageLoading, setPageLoading] = useState(false);
+  const [deciding, setDeciding] = useState(false);
   const seenPending = useRef(new Set());
   const primed = useRef(false);
+  const tRef = useRef(t);
+  tRef.current = t;
 
   const pending = visits.filter((v) => v.status === 'pending');
   const approved = visits.filter((v) => v.status === 'approved');
-  const hostRec = { dept: profile?.department || currentUser?.department || '—' };
-  const notifList = notifications;
+  const active = VIEWS.find((v) => v.id === view) || VIEWS[0];
 
   async function fetchHostData({ silent = false } = {}) {
     if (!on || !currentUser) return;
     if (!silent) setPageLoading(true);
     try {
-      const [v, n, p] = await Promise.all([
-        api.get('/host/visits'),
-        api.get('/host/notifications'),
-        api.get('/host/profile'),
-      ]);
+      const [v, n, p] = await Promise.all([api.get('/host/visits'), api.get('/host/notifications'), api.get('/host/profile')]);
       const nextVisits = v.data || [];
       const nextPending = nextVisits.filter((item) => item.status === 'pending');
-      const nextIds = new Set(nextPending.map((item) => item.id));
       if (primed.current) {
         const fresh = nextPending.filter((item) => !seenPending.current.has(item.id));
         if (fresh.length) {
           playNotifySound();
-          onToast(`${fresh.length} new visit request${fresh.length > 1 ? 's' : ''} waiting for approval`);
+          onToast(
+            fresh.length === 1
+              ? tRef.current('New visit request from {name}', { name: fresh[0].visitor })
+              : tRef.current('{count} new visit requests waiting for approval', { count: fresh.length })
+          );
         }
       }
-      seenPending.current = nextIds;
+      seenPending.current = new Set(nextPending.map((item) => item.id));
       primed.current = true;
       setVisits(nextVisits);
       setNotifications(n.data || []);
       setProfile(p.data || null);
     } catch {
-      if (!silent) onToast('Could not load portal data', true);
+      if (!silent) onToast(tRef.current('Could not load portal data'), true);
     } finally {
       if (!silent) setPageLoading(false);
     }
@@ -183,13 +213,21 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
   }
 
   async function decide(id, decision) {
+    setDeciding(true);
     try {
       await api.patch(`/host/visits/${id}/${decision === 'approved' ? 'approve' : 'reject'}`);
       const v = visits.find((x) => x.id === id);
-      await fetchHostData();
-      onToast(decision === 'approved' ? (v?.visitor || 'Visitor') + "'s visit approved — pass issued" : (v?.visitor || 'Visitor') + "'s visit rejected");
+      await fetchHostData({ silent: true });
+      const name = v?.visitor || t('Visitor');
+      onToast(
+        decision === 'approved'
+          ? t('{name} approved — the QR pass was sent on WhatsApp', { name })
+          : t('{name} rejected — the visitor has been told on WhatsApp', { name })
+      );
     } catch {
-      onToast('Could not update this visit', true);
+      onToast(t('Could not update this visit'), true);
+    } finally {
+      setDeciding(false);
     }
   }
 
@@ -201,7 +239,7 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
 
   return (
     <div id="app" className={on ? 'on' : ''}>
-      <ScreenLoader show={on && pageLoading} label="Loading portal…" />
+      <ScreenLoader show={on && pageLoading} label={t('Loading portal…')} />
       <div className={'ap-sidebar-backdrop' + (sidebarOpen ? ' open' : '')} onClick={() => setSidebarOpen(false)} />
       <div className="ap-shell">
         <aside className={'ap-sidebar' + (sidebarOpen ? ' open' : '')} id="apSidebar">
@@ -211,92 +249,33 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
               <path d="M12 20a8 8 0 1 1 3.2 6.4L11 28l1.4-4.2A8 8 0 0 1 12 20Z" stroke="#0D0822" strokeWidth="2" fill="none" />
               <path d="M17 19.5l2 2 4-4.2" stroke="#0D0822" strokeWidth="2" fill="none" />
             </svg>
-            Client Portal
+            {t('Client Portal')}
           </div>
           <nav className="ap-nav">
-            <button className={'ap-link' + (view === 'overview' ? ' active' : '')} onClick={() => switchView('overview')}>
-              <span className="ic">
-                <LayoutDashboard size={18} strokeWidth={1.85} />
-              </span>
-              Overview
-            </button>
-            <button className={'ap-link' + (view === 'requests' ? ' active' : '')} onClick={() => switchView('requests')}>
-              <span className="ic">
-                <ClipboardList size={18} strokeWidth={1.85} />
-              </span>
-              Visit requests
-              <span className="ap-sbadge" id="pendingBadge" style={{ display: pending.length ? 'inline-block' : 'none' }}>
-                {pending.length || ''}
-              </span>
-            </button>
-            <button className={'ap-link' + (view === 'conversations' ? ' active' : '')} onClick={() => switchView('conversations')}>
-              <span className="ic">
-                <MessagesSquare size={18} strokeWidth={1.85} />
-              </span>
-              Conversations
-            </button>
-            <button className={'ap-link' + (view === 'agent' ? ' active' : '')} onClick={() => switchView('agent')}>
-              <span className="ic">
-                <Bot size={18} strokeWidth={1.85} />
-              </span>
-              AI Agent
-            </button>
-            <button className={'ap-link' + (view === 'whatsapp' ? ' active' : '')} onClick={() => switchView('whatsapp')}>
-              <span className="ic">
-                <QrCode size={18} strokeWidth={1.85} />
-              </span>
-              WhatsApp
-            </button>
-            <button className={'ap-link' + (view === 'hosts' ? ' active' : '')} onClick={() => switchView('hosts')}>
-              <span className="ic">
-                <UserCheck size={18} strokeWidth={1.85} />
-              </span>
-              Hosts
-            </button>
-            <button className={'ap-link' + (view === 'knowledge' ? ' active' : '')} onClick={() => switchView('knowledge')}>
-              <span className="ic">
-                <BookOpen size={18} strokeWidth={1.85} />
-              </span>
-              Knowledge base
-            </button>
-            <button className={'ap-link' + (view === 'passes' ? ' active' : '')} onClick={() => switchView('passes')}>
-              <span className="ic">
-                <QrCode size={18} strokeWidth={1.85} />
-              </span>
-              My passes
-            </button>
-            <button className={'ap-link' + (view === 'history' ? ' active' : '')} onClick={() => switchView('history')}>
-              <span className="ic">
-                <History size={18} strokeWidth={1.85} />
-              </span>
-              History
-            </button>
-            <button className={'ap-link' + (view === 'notifications' ? ' active' : '')} onClick={() => switchView('notifications')}>
-              <span className="ic">
-                <Bell size={18} strokeWidth={1.85} />
-              </span>
-              Notifications
-            </button>
-            <button className={'ap-link' + (view === 'profile' ? ' active' : '')} onClick={() => switchView('profile')}>
-              <span className="ic">
-                <Settings size={18} strokeWidth={1.85} />
-              </span>
-              Profile
-            </button>
+            {VIEWS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button key={item.id} className={'ap-link' + (view === item.id ? ' active' : '')} onClick={() => switchView(item.id)}>
+                  <span className="ic">
+                    <Icon size={18} strokeWidth={1.85} />
+                  </span>
+                  {t(item.label)}
+                  {item.id === 'requests' && pending.length ? <span className="ap-sbadge">{pending.length}</span> : null}
+                </button>
+              );
+            })}
           </nav>
           <div className="ap-foot">
             <div className="ap-user">
-              <div className="ap-avatar" id="userAvatar">
-                {currentUser ? initials(currentUser.name) : '--'}
-              </div>
+              <div className="ap-avatar">{currentUser ? initials(currentUser.name) : '--'}</div>
               <div>
-                <b id="userName">{currentUser ? currentUser.name : '—'}</b>
-                <span id="userRole">{currentUser ? currentUser.role : '—'}</span>
+                <b>{currentUser ? currentUser.name : '—'}</b>
+                <span>{currentUser ? t(currentUser.role) : '—'}</span>
               </div>
             </div>
             <button className="ap-logout" onClick={doLogout}>
               <LogOut size={15} strokeWidth={2} />
-              Sign out
+              {t('Sign out')}
             </button>
           </div>
         </aside>
@@ -304,45 +283,45 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
         <main className="ap-main">
           <div className="ap-topbar">
             <div className="ap-topbar-lead">
-              <button className="ap-menu-toggle" onClick={() => setSidebarOpen((o) => !o)} aria-label="Open menu">
+              <button className="ap-menu-toggle" onClick={() => setSidebarOpen((o) => !o)} aria-label={t('Open menu')}>
                 <Menu size={20} strokeWidth={2} />
               </button>
               <div>
-                <h2 id="viewTitle">{titles[view][0]}</h2>
-                <p className="sub" id="viewSub">
-                  {titles[view][1]}
-                </p>
+                <h2>{t(active.label)}</h2>
+                <p className="sub">{t(active.sub)}</p>
               </div>
             </div>
             <div className="ap-topbar-actions">
+              <LanguageSwitch />
               <button
                 className="ap-bell"
                 type="button"
-                onClick={() => switchView('notifications')}
-                aria-label={pending.length ? `${pending.length} visit notifications` : 'Notifications'}
+                onClick={() => switchView('requests')}
+                aria-label={pending.length ? t('{count} requests waiting for approval', { count: pending.length }) : t('Notifications')}
               >
                 <Bell size={18} strokeWidth={2.1} />
                 {pending.length ? <span className="ap-bell-dot">{pending.length}</span> : null}
               </button>
               <button className="ap-btn ap-btn-ghost ap-btn-sm ap-back-site" onClick={onBackToSite}>
-                <ArrowLeft size={14} strokeWidth={2.2} /> <span>Back to site</span>
+                <ArrowLeft size={14} strokeWidth={2.2} /> <span>{t('Back to site')}</span>
               </button>
             </div>
           </div>
 
           <div className="ap-content">
-            <section className={'ap-view' + (view === 'overview' ? ' active' : '')} id="view-overview">
+            <section className={'ap-view' + (view === 'overview' ? ' active' : '')}>
               <div className="dash-hero">
                 <div>
-                  <span className="dash-kicker">
-                    <Sparkles size={14} strokeWidth={2.2} /> Host overview
-                  </span>
-                  <h3>Welcome back{currentUser?.name ? `, ${currentUser.name.split(' ')[0]}` : ''}</h3>
-                  <p>Approve visitors, issue passes, and keep your lobby moving.</p>
+                  <h3>
+                    {currentUser?.name
+                      ? t('Welcome back, {name}', { name: currentUser.name.split(' ')[0] })
+                      : t('Welcome back')}
+                  </h3>
+                  <p>{t('Review visit requests, issue passes, and keep reception moving.')}</p>
                 </div>
                 <div className="dash-hero-meta">
                   <CalendarDays size={18} strokeWidth={1.9} />
-                  {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                  {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                 </div>
               </div>
               <div className="ap-stat-row">
@@ -352,8 +331,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <Clock size={20} strokeWidth={1.9} />
                     </div>
                   </div>
-                  <b id="ovPending">{pending.length}</b>
-                  <span className="lab">Pending your approval</span>
+                  <b>{pending.length}</b>
+                  <span className="lab">{t('Waiting for approval')}</span>
                 </div>
                 <div className="ap-stat-card">
                   <div className="top">
@@ -361,8 +340,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <ShieldCheck size={20} strokeWidth={1.9} />
                     </div>
                   </div>
-                  <b id="ovApproved">{approved.length}</b>
-                  <span className="lab">Approved this month</span>
+                  <b>{approved.length}</b>
+                  <span className="lab">{t('Approved passes')}</span>
                 </div>
                 <div className="ap-stat-card">
                   <div className="top">
@@ -370,8 +349,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <Users size={20} strokeWidth={1.9} />
                     </div>
                   </div>
-                  <b id="ovTotal">{visits.length}</b>
-                  <span className="lab">Total visitors hosted</span>
+                  <b>{visits.length}</b>
+                  <span className="lab">{t('Total visit requests')}</span>
                 </div>
               </div>
               <div className="ap-panel">
@@ -381,27 +360,27 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <ClipboardList size={16} strokeWidth={2} />
                     </span>
                     <div>
-                      <h3>Awaiting your decision</h3>
-                      <p>Approve or reject with one tap</p>
+                      <h3>{t('Waiting for a decision')}</h3>
+                      <p>{t('New requests from WhatsApp appear here automatically')}</p>
                     </div>
                   </div>
                   <button className="ap-btn ap-btn-ghost ap-btn-sm" onClick={() => switchView('requests')}>
-                    View all
+                    {t('View all')}
                   </button>
                 </div>
-                <div className="ap-req-list" id="ovRequests">
+                <div className="ap-req-list">
                   {pending.length ? (
-                    pending.map((v) => <ReqCard key={v.id} v={v} onDecide={decide} />)
+                    pending.map((v) => <ReqCard key={v.id} v={v} onDecide={decide} busy={deciding} />)
                   ) : (
                     <div className="ap-empty">
-                      <EmptyState icon={CheckCircle2}>Nothing waiting on you right now</EmptyState>
+                      <EmptyState icon={CheckCircle2}>{t('No requests waiting right now')}</EmptyState>
                     </div>
                   )}
                 </div>
               </div>
             </section>
 
-            <section className={'ap-view' + (view === 'requests' ? ' active' : '')} id="view-requests">
+            <section className={'ap-view' + (view === 'requests' ? ' active' : '')}>
               <div className="ap-panel">
                 <div className="ap-panel-head">
                   <div className="ap-panel-title">
@@ -409,25 +388,24 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <ClipboardList size={16} strokeWidth={2} />
                     </span>
                     <div>
-                      <h3>Visit requests</h3>
-                      <p>Every request routed to you</p>
+                      <h3>{t('Visit requests')}</h3>
+                      <p>{t('All company visit requests, newest first')}</p>
                     </div>
                   </div>
+                  {pending.length ? <span className="ap-badge pending">{t('{count} pending', { count: pending.length })}</span> : null}
                 </div>
-                <div className="ap-req-list" id="allRequests">
+                <div className="ap-req-list">
                   {visits.length ? (
                     visits.map((v) =>
                       v.status === 'pending' ? (
-                        <ReqCard key={v.id} v={v} onDecide={decide} />
+                        <ReqCard key={v.id} v={v} onDecide={decide} busy={deciding} />
                       ) : (
                         <div className="ap-req-card" key={v.id}>
                           <div className="ap-row-flex">
                             <div className="ap-avatar-sm">{initials(v.visitor)}</div>
                             <div className="ap-req-info">
                               <b>{v.visitor}</b>
-                              <span>
-                                {v.purpose} · {v.date} at {v.time} · {v.ref}
-                              </span>
+                              <VisitMeta v={v} />
                             </div>
                           </div>
                           <Badge status={v.status} />
@@ -436,14 +414,14 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                     )
                   ) : (
                     <div className="ap-empty">
-                      <EmptyState icon={ClipboardList}>No visit requests yet</EmptyState>
+                      <EmptyState icon={ClipboardList}>{t('No visit requests yet')}</EmptyState>
                     </div>
                   )}
                 </div>
               </div>
             </section>
 
-            <section className={'ap-view' + (view === 'passes' ? ' active' : '')} id="view-passes">
+            <section className={'ap-view' + (view === 'passes' ? ' active' : '')}>
               <div className="ap-panel">
                 <div className="ap-panel-head">
                   <div className="ap-panel-title">
@@ -451,60 +429,65 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <QrCode size={16} strokeWidth={2} />
                     </span>
                     <div>
-                      <h3>Active passes for your approved visitors</h3>
-                      <p>Share these details with front-desk security if needed</p>
+                      <h3>{t('Active passes')}</h3>
+                      <p>{t('Share these details with security at the gate if needed')}</p>
                     </div>
                   </div>
                 </div>
-                <div className="ap-passes-grid" id="passesGrid">
+                <div className="ap-passes-grid">
                   {approved.length ? (
                     approved.map((v) => (
                       <div className="ap-pass-card" key={v.id}>
                         <div className="ap-pass-top">
                           <b>{v.ref}</b>
-                          <span style={{ fontSize: 11, color: 'var(--teal)' }}>ACTIVE</span>
+                          <span className="ap-pass-state">{t('Active')}</span>
                         </div>
-                        <div className="ap-pass-qr"></div>
                         <div className="ap-pass-pin">
-                          <span>Visitor</span>
-                          <b style={{ fontSize: 15, letterSpacing: 0, color: '#fff' }}>{v.visitor}</b>
+                          <span>{t('Visitor')}</span>
+                          <b className="ap-pass-name">{v.visitor}</b>
                         </div>
-                        <div className="ap-pass-pin" style={{ marginTop: 12 }}>
-                          <span>Backup PIN</span>
+                        <div className="ap-pass-pin">
+                          <span>{t('Date')}</span>
+                          <b className="ap-pass-name">
+                            {fmt.date(v.date)} · {v.time}
+                          </b>
+                        </div>
+                        <div className="ap-pass-pin">
+                          <span>{t('Backup PIN')}</span>
                           <b>{v.pin || '—'}</b>
                         </div>
                       </div>
                     ))
                   ) : (
                     <div className="ap-empty">
-                      <EmptyState icon={QrCode}>No active passes right now</EmptyState>
+                      <EmptyState icon={QrCode}>{t('No active passes right now')}</EmptyState>
                     </div>
                   )}
                 </div>
               </div>
             </section>
 
-            <section className={'ap-view' + (view === 'conversations' ? ' active' : '')} id="view-conversations">
+            <section className={'ap-view' + (view === 'conversations' ? ' active' : '')}>
               {view === 'conversations' ? <Conversations /> : null}
             </section>
 
-            <section className={'ap-view' + (view === 'agent' ? ' active' : '')} id="view-agent">
-              {view === 'agent' ? <Agent onAfterAction={fetchHostData} /> : null}
+            <section className={'ap-view' + (view === 'agent' ? ' active' : '')}>
+              {view === 'agent' ? <Agent onAfterAction={() => fetchHostData({ silent: true })} /> : null}
             </section>
 
-            <section className={'ap-view' + (view === 'whatsapp' ? ' active' : '')} id="view-whatsapp">
+            <section className={'ap-view' + (view === 'whatsapp' ? ' active' : '')}>
               {view === 'whatsapp' ? <WhatsAppLink onToast={onToast} /> : null}
             </section>
 
-            <section className={'ap-view' + (view === 'hosts' ? ' active' : '')} id="view-hosts">
+            <section className={'ap-view' + (view === 'hosts' ? ' active' : '')}>
               {view === 'hosts' ? <HostDirectory onToast={onToast} /> : null}
             </section>
 
-            <section className={'ap-view' + (view === 'knowledge' ? ' active' : '')} id="view-knowledge">
+            <section className={'ap-view' + (view === 'knowledge' ? ' active' : '')}>
               {view === 'knowledge' ? <KnowledgeBase onToast={onToast} /> : null}
             </section>
 
-            <section className={'ap-view' + (view === 'history' ? ' active' : '')} id="view-history">
+            <section className={'ap-view' + (view === 'history' ? ' active' : '')}>
               <div className="ap-panel">
                 <div className="ap-panel-head">
                   <div className="ap-panel-title">
@@ -512,8 +495,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <History size={16} strokeWidth={2} />
                     </span>
                     <div>
-                      <h3>Visit history</h3>
-                      <p>Everyone who has visited you</p>
+                      <h3>{t('Visit history')}</h3>
+                      <p>{t('Every visit on record')}</p>
                     </div>
                   </div>
                 </div>
@@ -521,24 +504,31 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                   <table className="ap-table">
                     <thead>
                       <tr>
-                        <th>Visitor</th>
-                        <th>Purpose</th>
-                        <th>Date</th>
-                        <th>Status</th>
+                        <th>{t('Visitor')}</th>
+                        <th>{t('Host')}</th>
+                        <th>{t('Purpose')}</th>
+                        <th>{t('Date')}</th>
+                        <th>{t('Status')}</th>
                       </tr>
                     </thead>
-                    <tbody id="historyTable">
+                    <tbody>
                       {visits.length ? (
                         visits.map((v) => (
                           <tr key={v.id}>
                             <td>
                               <div className="ap-row-flex">
                                 <div className="ap-avatar-sm">{initials(v.visitor)}</div>
-                                <div className="ap-cell-main">{v.visitor}</div>
+                                <div>
+                                  <div className="ap-cell-main">{v.visitor}</div>
+                                  {v.company ? <div className="ap-cell-sub">{v.company}</div> : null}
+                                </div>
                               </div>
                             </td>
+                            <td>{v.host}</td>
                             <td>{v.purpose}</td>
-                            <td>{v.date}</td>
+                            <td className="ap-nowrap">
+                              {fmt.date(v.date)} · {v.time}
+                            </td>
                             <td>
                               <Badge status={v.status} />
                             </td>
@@ -546,8 +536,8 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan="4" className="ap-empty">
-                            <EmptyState icon={History}>No visit history yet</EmptyState>
+                          <td colSpan="5" className="ap-empty">
+                            <EmptyState icon={History}>{t('No visit history yet')}</EmptyState>
                           </td>
                         </tr>
                       )}
@@ -557,7 +547,7 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
               </div>
             </section>
 
-            <section className={'ap-view' + (view === 'notifications' ? ' active' : '')} id="view-notifications">
+            <section className={'ap-view' + (view === 'notifications' ? ' active' : '')}>
               <div className="ap-panel">
                 <div className="ap-panel-head">
                   <div className="ap-panel-title">
@@ -565,27 +555,27 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <Bell size={16} strokeWidth={2} />
                     </span>
                     <div>
-                      <h3>Notifications</h3>
-                      <p>Recent updates on your requests</p>
+                      <h3>{t('Notifications')}</h3>
+                      <p>{t('New requests and decisions')}</p>
                     </div>
                   </div>
                 </div>
-                <div className="ap-feed" id="notifFeed">
-                  {notifList.length ? (
-                    notifList.map((a, i) => {
-                      const isApprove = a.action.includes('Approved');
-                      const isReject = a.action.includes('Rejected');
+                <div className="ap-feed">
+                  {notifications.length ? (
+                    notifications.map((a, i) => {
+                      const isApprove = /Approved/.test(a.action);
+                      const isReject = /Rejected/.test(a.action);
                       const bg = isApprove ? 'var(--ok-bg)' : isReject ? 'var(--bad-bg)' : '#EFE9FF';
                       const col = isApprove ? 'var(--ok)' : isReject ? 'var(--bad)' : 'var(--violet-2)';
                       const Icon = isApprove ? Check : isReject ? X : Activity;
                       return (
-                        <div className="ap-feed-item" key={i}>
+                        <div className="ap-feed-item" key={a.id || i}>
                           <div className="ap-feed-dot" style={{ background: bg, color: col }}>
                             <Icon size={15} strokeWidth={2.1} />
                           </div>
                           <div>
                             <p>
-                              {a.action} — {a.details}
+                              <b>{t(a.action)}</b> — {a.details}
                             </p>
                             <span>{a.time}</span>
                           </div>
@@ -594,14 +584,14 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                     })
                   ) : (
                     <div className="ap-empty">
-                      <EmptyState icon={Bell}>No notifications yet</EmptyState>
+                      <EmptyState icon={Bell}>{t('No notifications yet')}</EmptyState>
                     </div>
                   )}
                 </div>
               </div>
             </section>
 
-            <section className={'ap-view' + (view === 'profile' ? ' active' : '')} id="view-profile">
+            <section className={'ap-view' + (view === 'profile' ? ' active' : '')}>
               <div className="ap-panel">
                 <div className="ap-panel-head">
                   <div className="ap-panel-title">
@@ -609,31 +599,33 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                       <Settings size={16} strokeWidth={2} />
                     </span>
                     <div>
-                      <h3>Your profile</h3>
+                      <h3>{t('Your profile')}</h3>
+                      <p>{t('Profile details are managed by your administrator.')}</p>
                     </div>
                   </div>
                 </div>
                 <div className="ap-profile-grid">
                   <div className="ap-f-field">
-                    <label>Full name</label>
-                    <input id="pName" disabled value={currentUser ? currentUser.name : ''} readOnly />
+                    <label>{t('Full name')}</label>
+                    <input disabled value={currentUser ? currentUser.name : ''} readOnly />
                   </div>
                   <div className="ap-f-field">
-                    <label>Username</label>
-                    <input id="pUser" disabled value={currentUser ? currentUser.username : ''} readOnly />
+                    <label>{t('Username')}</label>
+                    <input disabled value={currentUser ? currentUser.username : ''} readOnly />
                   </div>
                   <div className="ap-f-field">
-                    <label>Role</label>
-                    <input id="pRole" disabled value={currentUser ? currentUser.role : ''} readOnly />
+                    <label>{t('Role')}</label>
+                    <input disabled value={currentUser ? t(currentUser.role) : ''} readOnly />
                   </div>
                   <div className="ap-f-field">
-                    <label>Department</label>
-                    <input id="pDept" disabled value={hostRec ? hostRec.dept : '—'} readOnly />
+                    <label>{t('Department')}</label>
+                    <input disabled value={profile?.department || currentUser?.department || '—'} readOnly />
+                  </div>
+                  <div className="ap-f-field">
+                    <label>{t('Language')}</label>
+                    <LanguageSwitch className="lang-switch-lg" />
                   </div>
                 </div>
-                <p style={{ padding: '0 24px 18px', fontSize: '12.5px', color: 'var(--muted)' }}>
-                  Profile details are managed by your administrator in the Admin Panel.
-                </p>
               </div>
             </section>
           </div>

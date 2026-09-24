@@ -6,6 +6,7 @@ import PassView from './components/PassView';
 import Portal from './components/Portal';
 import Validator from './components/Validator';
 import { getClientToken } from './api/client';
+import { LanguageProvider } from './i18n';
 
 function routeFromPath() {
   const path = window.location.pathname.replace(/\/$/, '') || '/';
@@ -66,11 +67,11 @@ export default function App() {
   }
 
   return (
-    <>
+    <LanguageProvider user={currentUser?.username}>
       <div id="glow"></div>
       <Landing hidden={appOn} navLabel={currentUser ? 'Go to Dashboard' : 'Client Login'} onOpenLogin={() => setLoginOn(true)} />
       <LoginScreen on={loginOn} onClose={() => setLoginOn(false)} onSuccess={enterApp} />
       <Portal on={appOn} currentUser={currentUser} onBackToSite={backToSite} onToast={showToast} />
-    </>
+    </LanguageProvider>
   );
 }

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   Activity,
-  AlertTriangle,
   Ban,
   BarChart3,
   Building2,
@@ -19,12 +18,12 @@ import {
   MoreHorizontal,
   Plus,
   QrCode,
+  RefreshCw,
+  ScanLine,
   ScrollText,
   Search,
   Settings,
   ShieldCheck,
-  Sparkles,
-  TrendingUp,
   UserCheck,
   UserPlus,
   Users,
@@ -36,19 +35,35 @@ import LoginScreen from './components/LoginScreen';
 import ScreenLoader from './components/ScreenLoader';
 import api, { getAdminToken, setAdminToken } from './api/client';
 import { initials } from './lib/db';
+import { LanguageSwitch, useI18n } from './i18n';
 
-const titles = {
-  dashboard: ['Dashboard', 'Overview of visitor activity today'],
-  visitors: ['Visitors', 'Everyone who has ever requested a visit'],
-  visits: ['Visit requests', 'Approve, reject or review bookings'],
-  passes: ['QR & Passes', 'Every access token issued'],
+const TITLES = {
+  dashboard: ['Dashboard', 'Visitor activity at a glance'],
+  visitors: ['Visitors', 'Everyone who has requested a visit'],
+  visits: ['Visit requests', 'Approve, reject, or review bookings'],
+  passes: ['QR & Passes', 'Every access pass issued'],
   conversations: ['Conversations', 'Full WhatsApp threads with visitors'],
-  hosts: ['Hosts', 'People who approve visit requests'],
-  accounts: ['Client accounts', 'Logins you issue to clients and staff'],
-  reports: ['Reports', 'Trends and exportable records'],
+  hosts: ['Hosts', 'People and departments visitors can book'],
+  accounts: ['Client accounts', 'Portal logins for staff'],
+  reports: ['Reports', 'Totals and exportable records'],
   audit: ['Audit log', 'Full history of system actions'],
-  settings: ['Settings', 'Organization preferences'],
+  settings: ['Settings', 'Organisation details and preferences'],
 };
+
+const STATUS_LABEL = {
+  approved: 'Approved',
+  pending: 'Pending',
+  rejected: 'Rejected',
+  active: 'Active',
+  expired: 'Expired',
+  used: 'Checked in',
+  revoked: 'Revoked',
+  blocked: 'Blocked',
+  disabled: 'Disabled',
+  inactive: 'Inactive',
+};
+
+const ROLE_OPTIONS = ['Host', 'Security', 'Client Admin'];
 
 function tokenRef(token) {
   if (!token) return '—';
@@ -56,20 +71,20 @@ function tokenRef(token) {
   return `${token.slice(0, 8)}…${token.slice(-4)}`;
 }
 
+function todayStamp() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function matches(query, ...fields) {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  return fields.some((f) => String(f ?? '').toLowerCase().includes(q));
+}
+
 function Badge({ status }) {
-  const map = {
-    approved: 'approved',
-    pending: 'pending',
-    rejected: 'rejected',
-    active: 'active',
-    expired: 'expired',
-    used: 'used',
-    revoked: 'revoked',
-    blocked: 'blocked',
-    disabled: 'disabled',
-    inactive: 'inactive',
-  };
-  const cls = map[status] || 'active';
+  const { t } = useI18n();
+  const cls = STATUS_LABEL[status] ? status : 'active';
   const Icon =
     status === 'blocked'
       ? Ban
@@ -83,7 +98,7 @@ function Badge({ status }) {
   return (
     <span className={`badge ${cls}`}>
       <Icon size={11} strokeWidth={2.6} />
-      {status}
+      {t(STATUS_LABEL[status] || status)}
     </span>
   );
 }
@@ -99,25 +114,27 @@ function EmptyState({ icon: Icon, children }) {
   );
 }
 
-function NavBtn({ active, icon: Icon, children, onClick }) {
+function NavBtn({ active, icon: Icon, children, onClick, count }) {
   return (
     <button className={'sb-link' + (active ? ' active' : '')} onClick={onClick}>
       <span className="ic">
         <Icon size={18} strokeWidth={1.85} />
       </span>
       {children}
+      {count ? <span className="sb-count">{count}</span> : null}
     </button>
   );
 }
 
 export default function App() {
+  const { t, locale } = useI18n();
   const [loggedIn, setLoggedIn] = useState(false);
   const [view, setView] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [visitFilter, setVisitFilter] = useState('all');
+  const [query, setQuery] = useState('');
   const [modal, setModal] = useState(null);
-  const [detailTitle, setDetailTitle] = useState('Details');
-  const [detailBody, setDetailBody] = useState(null);
+  const [detail, setDetail] = useState(null);
 
   const [hName, setHName] = useState('');
   const [hDept, setHDept] = useState('');
@@ -133,8 +150,8 @@ export default function App() {
   const [vDate, setVDate] = useState('');
   const [vTime, setVTime] = useState('');
   const [setOrgName, setSetOrgName] = useState('Botho Innovations');
-  const [setPhone, setSetPhone] = useState('+27 00 000 0000');
-  const [setEmail, setSetEmail] = useState('support@bothoinnovations.com');
+  const [setPhone, setSetPhone] = useState('');
+  const [setEmail, setSetEmail] = useState('');
 
   const [visits, setVisits] = useState([]);
   const [hosts, setHosts] = useState([]);
@@ -143,8 +160,13 @@ export default function App() {
   const [audit, setAudit] = useState([]);
   const [pageLoading, setPageLoading] = useState(false);
 
-  async function fetchAll() {
-    setPageLoading(true);
+  function toast(msg, isErr) {
+    if (isErr) notify.error(msg);
+    else notify.success(msg);
+  }
+
+  async function fetchAll({ silent = false } = {}) {
+    if (!silent) setPageLoading(true);
     try {
       const [v, h, vis, a, au, s] = await Promise.all([
         api.get('/visits'),
@@ -163,9 +185,9 @@ export default function App() {
       if (s.data?.phone) setSetPhone(s.data.phone);
       if (s.data?.email) setSetEmail(s.data.email);
     } catch {
-      toast('Could not load data from the server', true);
+      toast(t('Could not load data from the server'), true);
     } finally {
-      setPageLoading(false);
+      if (!silent) setPageLoading(false);
     }
   }
 
@@ -177,10 +199,14 @@ export default function App() {
     if (loggedIn) fetchAll();
   }, [loggedIn]);
 
-  function toast(msg, isErr) {
-    if (isErr) notify.error(msg);
-    else notify.success(msg);
-  }
+  useEffect(() => {
+    if (hosts.length && !vHost) setVHost(hosts[0].name);
+  }, [hosts, vHost]);
+
+  useEffect(() => {
+    document.body.classList.toggle('drawer-open', sidebarOpen);
+    return () => document.body.classList.remove('drawer-open');
+  }, [sidebarOpen]);
 
   function switchView(name) {
     setView(name);
@@ -193,287 +219,197 @@ export default function App() {
     location.reload();
   }
 
-  function openModal(id) {
-    setModal(id);
+  const closeModal = () => setModal(null);
+
+  function formatDate(value) {
+    if (!value) return '—';
+    const d = new Date(`${String(value).slice(0, 10)}T12:00:00`);
+    return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
-  function closeModal() {
-    setModal(null);
-  }
-
-  function viewVisitorDetail(v) {
-    setDetailTitle(v.name);
-    setDetailBody(
-      <>
-        <div className="detail-row">
-          <span className="k">Company</span>
-          <span className="v">{v.company}</span>
-        </div>
-        <div className="detail-row">
-          <span className="k">Total visits</span>
-          <span className="v">{v.visits}</span>
-        </div>
-        <div className="detail-row">
-          <span className="k">Last visit</span>
-          <span className="v">{v.lastVisit}</span>
-        </div>
-        <div className="detail-row">
-          <span className="k">Status</span>
-          <span className="v">
-            <Badge status={v.status} />
-          </span>
-        </div>
-      </>
-    );
-    openModal('detailModal');
-  }
-
-  function viewVisitDetail(v) {
-    setDetailTitle(v.ref);
-    setDetailBody(
-      <>
-        <div className="detail-row">
-          <span className="k">Visitor</span>
-          <span className="v">{v.visitor}</span>
-        </div>
-        <div className="detail-row">
-          <span className="k">Host</span>
-          <span className="v">{v.host}</span>
-        </div>
-        <div className="detail-row">
-          <span className="k">Purpose</span>
-          <span className="v">{v.purpose}</span>
-        </div>
-        <div className="detail-row">
-          <span className="k">Date / Time</span>
-          <span className="v">
-            {v.date} · {v.time}
-          </span>
-        </div>
-        <div className="detail-row">
-          <span className="k">Status</span>
-          <span className="v">
-            <Badge status={v.status} />
-          </span>
-        </div>
-        <div className="detail-row">
-          <span className="k">PIN</span>
-          <span className="v">{v.pin || '—'}</span>
-        </div>
-        <div className="detail-row">
-          <span className="k">QR token</span>
-          <span className="v">{tokenRef(v.qrToken)}</span>
-        </div>
-      </>
-    );
-    openModal('detailModal');
-  }
-
-  async function blockHost(id) {
+  async function run(action, success, failure) {
     try {
-      await api.patch(`/hosts/${id}/block`);
-      await fetchAll();
-      toast('Host blocked');
-    } catch {
-      toast('Could not block host', true);
-    }
-  }
-
-  async function unblockHost(id) {
-    try {
-      await api.patch(`/hosts/${id}/unblock`);
-      await fetchAll();
-      toast('Host unblocked');
-    } catch {
-      toast('Could not unblock host', true);
-    }
-  }
-
-  async function deleteHost(id, name) {
-    if (!window.confirm(`Delete host ${name}? This cannot be undone.`)) return;
-    try {
-      await api.delete(`/hosts/${id}`, { data: { confirm: true } });
-      await fetchAll();
-      toast('Host deleted');
+      await action();
+      await fetchAll({ silent: true });
+      if (success) toast(success);
     } catch (err) {
-      toast(err.response?.data?.error || 'Could not delete host', true);
+      toast(err.response?.data?.error || failure, true);
     }
+  }
+
+  const blockHost = (id) => run(() => api.patch(`/hosts/${id}/block`), t('Host blocked'), t('Could not block host'));
+  const unblockHost = (id) => run(() => api.patch(`/hosts/${id}/unblock`), t('Host unblocked'), t('Could not unblock host'));
+  const blockAccount = (id) => run(() => api.patch(`/accounts/${id}/block`), t('Account blocked'), t('Could not block account'));
+  const unblockAccount = (id) => run(() => api.patch(`/accounts/${id}/unblock`), t('Account unblocked'), t('Could not unblock account'));
+  const revokePass = (id) => run(() => api.post(`/passes/${id}/revoke`), t('Pass revoked'), t('Could not revoke pass'));
+
+  function deleteHost(id, name) {
+    if (!window.confirm(t('Delete host {name}? This cannot be undone.', { name }))) return;
+    run(() => api.delete(`/hosts/${id}`, { data: { confirm: true } }), t('Host deleted'), t('Could not delete host'));
+  }
+
+  function deleteAccount(id, name) {
+    if (!window.confirm(t('Delete account {name}? This cannot be undone.', { name }))) return;
+    run(() => api.delete(`/accounts/${id}`, { data: { confirm: true } }), t('Account deleted'), t('Could not delete account'));
+  }
+
+  function decideVisit(id, decision) {
+    run(
+      () => api.patch(`/visits/${id}/${decision === 'approved' ? 'approve' : 'reject'}`),
+      decision === 'approved' ? t('Visit approved — the QR pass was sent on WhatsApp') : t('Visit rejected — the visitor has been told'),
+      t('Could not update visit')
+    );
   }
 
   async function saveHost() {
     const name = hName.trim();
-    const dept = hDept.trim();
-    const phone = hPhone.trim();
-    if (!name || !dept) {
-      toast('Please fill in name and department', true);
+    const department = hDept.trim();
+    if (!name || !department) {
+      toast(t('Please fill in the name and department'), true);
       return;
     }
     try {
-      await api.post('/hosts', { name, department: dept, phone });
+      await api.post('/hosts', { name, department, phone: hPhone.trim() });
       closeModal();
       setHName('');
       setHDept('');
       setHPhone('');
-      await fetchAll();
-      toast('Host added');
-    } catch {
-      toast('Could not add host', true);
+      await fetchAll({ silent: true });
+      toast(t('Host added'));
+    } catch (err) {
+      toast(err.response?.data?.error || t('Could not add host'), true);
     }
-  }
-
-  async function decideVisit(id, decision) {
-    try {
-      await api.patch(`/visits/${id}/${decision === 'approved' ? 'approve' : 'reject'}`);
-      await fetchAll();
-      toast(decision === 'approved' ? 'Visit approved — pass issued' : 'Visit rejected');
-    } catch {
-      toast('Could not update visit', true);
-    }
-  }
-
-  function openNewVisitModal() {
-    if (hosts.length && !vHost) setVHost(hosts[0].name);
-    openModal('visitModal');
   }
 
   async function saveVisit() {
-    const name = vName.trim();
-    const company = vCompany.trim();
-    const host = vHost;
-    const purpose = vPurpose.trim();
-    const date = vDate;
-    const time = vTime;
-    if (!name || !host || !date) {
-      toast('Please fill in visitor name, host and date', true);
+    if (!vName.trim() || !vHost || !vDate) {
+      toast(t('Please fill in the visitor name, host, and date'), true);
       return;
     }
     try {
-      await api.post('/visits', { name, company, host, purpose, date, time });
+      await api.post('/visits', { name: vName.trim(), company: vCompany.trim(), host: vHost, purpose: vPurpose.trim(), date: vDate, time: vTime });
       closeModal();
       setVName('');
       setVCompany('');
       setVPurpose('');
       setVDate('');
       setVTime('');
-      await fetchAll();
-      toast('Visit request created');
+      await fetchAll({ silent: true });
+      toast(t('Visit request created'));
     } catch (err) {
-      toast(err.response?.data?.error || 'Could not create visit', true);
-    }
-  }
-
-  async function revokePass(id) {
-    try {
-      await api.post(`/passes/${id}/revoke`);
-      await fetchAll();
-      toast('Pass revoked');
-    } catch {
-      toast('Could not revoke pass', true);
-    }
-  }
-
-  async function blockAccount(id) {
-    try {
-      await api.patch(`/accounts/${id}/block`);
-      await fetchAll();
-      toast('Account blocked');
-    } catch {
-      toast('Could not block account', true);
-    }
-  }
-
-  async function unblockAccount(id) {
-    try {
-      await api.patch(`/accounts/${id}/unblock`);
-      await fetchAll();
-      toast('Account unblocked');
-    } catch {
-      toast('Could not unblock account', true);
-    }
-  }
-
-  async function deleteAccount(id, name) {
-    if (!window.confirm(`Delete account ${name}? This cannot be undone.`)) return;
-    try {
-      await api.delete(`/accounts/${id}`, { data: { confirm: true } });
-      await fetchAll();
-      toast('Account deleted');
-    } catch (err) {
-      toast(err.response?.data?.error || 'Could not delete account', true);
+      toast(err.response?.data?.error || t('Could not create visit'), true);
     }
   }
 
   async function saveAccount() {
-    const name = aName.trim();
-    const username = aUser.trim();
-    const password = aPass;
-    const role = aRole;
-    if (!name || !username || !password) {
-      toast('Please fill in every field', true);
+    if (!aName.trim() || !aUser.trim() || !aPass) {
+      toast(t('Please fill in every field'), true);
       return;
     }
     try {
-      await api.post('/accounts', { name, username, password, role });
+      await api.post('/accounts', { name: aName.trim(), username: aUser.trim(), password: aPass, role: aRole });
       closeModal();
       setAName('');
       setAUser('');
       setAPass('');
-      await fetchAll();
-      toast('Client account created');
+      await fetchAll({ silent: true });
+      toast(t('Account created'));
     } catch (err) {
-      toast(err.response?.data?.error || 'Could not create account', true);
+      toast(err.response?.data?.error || t('Could not create account'), true);
+    }
+  }
+
+  async function saveSettings() {
+    try {
+      await api.put('/settings', { orgName: setOrgName, phone: setPhone, email: setEmail });
+      toast(t('Settings saved'));
+    } catch {
+      toast(t('Could not save settings'), true);
     }
   }
 
   async function exportCSV(type) {
     try {
       const res = await api.get(`/reports/export?type=${type}`, { responseType: 'blob' });
-      const blob = new Blob([res.data], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }));
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'botho-' + type + '.csv';
+      a.download = `botho-${type}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-      toast('Export downloaded');
+      toast(t('Export downloaded'));
     } catch {
-      toast('Nothing to export yet', true);
+      toast(t('Nothing to export yet'), true);
     }
   }
 
-  async function resetAllData() {
-    if (!confirm('This reloads data from the database. Continue?')) return;
-    await fetchAll();
-    toast('Data refreshed from the database');
-  }
+  const today = todayStamp();
+  const pending = visits.filter((v) => v.status === 'pending');
+  const approved = visits.filter((v) => v.status === 'approved');
+  const checkedIn = visits.filter((v) => v.status === 'used');
+  const visitsToday = visits.filter((v) => String(v.date).slice(0, 10) === today);
 
-  const filteredVisits = visitFilter === 'all' ? visits : visits.filter((v) => v.status === visitFilter);
-  const issued = visits.filter((v) => v.status === 'approved');
-  const recent = visits.slice(0, 5);
-  const dashAudit = audit.slice(0, 6);
-  const icons = { Approved: [Check, 'var(--ok-bg)', 'var(--ok)'], Rejected: [X, 'var(--bad-bg)', 'var(--bad)'], default: [Activity, '#EFE9FF', 'var(--violet-2)'] };
+  const q = query.trim();
+  const shownVisitors = visitors.filter((v) => matches(q, v.name, v.company));
+  const shownVisits = visits
+    .filter((v) => visitFilter === 'all' || v.status === visitFilter)
+    .filter((v) => matches(q, v.ref, v.visitor, v.company, v.host, v.purpose));
+  const shownPasses = approved.filter((v) => matches(q, v.ref, v.visitor, v.pin));
+  const shownHosts = hosts.filter((h) => matches(q, h.name, h.dept, h.phone));
+  const shownAccounts = accounts.filter((a) => matches(q, a.name, a.username, a.role));
+  const shownAudit = audit.filter((a) => matches(q, a.actor, a.action, a.details));
 
   const depts = {};
   visits.forEach((v) => {
     const h = hosts.find((x) => x.name === v.host);
-    const d = h ? h.dept : 'Unassigned';
+    const d = h?.dept && h.dept !== '—' ? h.dept : t('Unassigned');
     depts[d] = (depts[d] || 0) + 1;
   });
-  const max = Math.max(1, ...Object.values(depts));
+  const maxDept = Math.max(1, ...Object.values(depts));
 
-  useEffect(() => {
-    if (hosts.length && !vHost) setVHost(hosts[0].name);
-  }, [hosts, vHost]);
+  const icons = {
+    Approved: [Check, 'var(--ok-bg)', 'var(--ok)'],
+    Rejected: [X, 'var(--bad-bg)', 'var(--bad)'],
+    Validated: [ScanLine, '#EAF3FF', '#2563EB'],
+    default: [Activity, '#EFE9FF', 'var(--violet-2)'],
+  };
 
-  useEffect(() => {
-    document.body.classList.toggle('drawer-open', sidebarOpen);
-    return () => document.body.classList.remove('drawer-open');
-  }, [sidebarOpen]);
+  function openVisitor(v) {
+    setDetail({
+      title: v.name,
+      rows: [
+        ['Company', v.company],
+        ['Total visits', v.visits],
+        ['Last visit', v.lastVisit],
+        ['Status', <Badge key="s" status={v.status} />],
+      ],
+    });
+    setModal('detailModal');
+  }
+
+  function openVisit(v) {
+    setDetail({
+      title: v.ref,
+      rows: [
+        ['Visitor', v.visitor],
+        ['Company', v.company || '—'],
+        ['Host', v.host],
+        ['Purpose', v.purpose],
+        ['Date / Time', `${formatDate(v.date)} · ${v.time}`],
+        ['Status', <Badge key="s" status={v.status} />],
+        ['Backup PIN', v.pin || '—'],
+        ['QR token', tokenRef(v.qrToken)],
+      ],
+    });
+    setModal('detailModal');
+  }
+
+  const [title, sub] = TITLES[view];
 
   return (
     <>
       <LoginScreen hidden={loggedIn} onSuccess={() => setLoggedIn(true)} />
-      <ScreenLoader show={loggedIn && pageLoading} label="Loading dashboard…" />
+      <ScreenLoader show={loggedIn && pageLoading} label={t('Loading dashboard…')} />
 
       <div id="app" className={loggedIn ? 'on' : ''}>
         <div className={'sidebar-backdrop' + (sidebarOpen ? ' open' : '')} onClick={() => setSidebarOpen(false)} />
@@ -485,54 +421,54 @@ export default function App() {
                 <path d="M12 20a8 8 0 1 1 3.2 6.4L11 28l1.4-4.2A8 8 0 0 1 12 20Z" stroke="#0D0822" strokeWidth="2" fill="none" />
                 <path d="M17 19.5l2 2 4-4.2" stroke="#0D0822" strokeWidth="2" fill="none" />
               </svg>
-              Botho Admin
+              {t('Botho Admin')}
             </div>
             <nav className="sb-nav">
               <NavBtn active={view === 'dashboard'} icon={LayoutDashboard} onClick={() => switchView('dashboard')}>
-                Dashboard
+                {t('Dashboard')}
               </NavBtn>
-              <div className="sb-group-label">Visitors</div>
+              <div className="sb-group-label">{t('Visitors')}</div>
               <NavBtn active={view === 'visitors'} icon={Users} onClick={() => switchView('visitors')}>
-                Visitors
+                {t('Visitors')}
               </NavBtn>
-              <NavBtn active={view === 'visits'} icon={ClipboardList} onClick={() => switchView('visits')}>
-                Visit Requests
+              <NavBtn active={view === 'visits'} icon={ClipboardList} onClick={() => switchView('visits')} count={pending.length}>
+                {t('Visit requests')}
               </NavBtn>
               <NavBtn active={view === 'passes'} icon={QrCode} onClick={() => switchView('passes')}>
-                QR &amp; Passes
+                {t('QR & Passes')}
               </NavBtn>
               <NavBtn active={view === 'conversations'} icon={MessagesSquare} onClick={() => switchView('conversations')}>
-                Conversations
+                {t('Conversations')}
               </NavBtn>
-              <div className="sb-group-label">People</div>
+              <div className="sb-group-label">{t('People')}</div>
               <NavBtn active={view === 'hosts'} icon={UserCheck} onClick={() => switchView('hosts')}>
-                Hosts
+                {t('Hosts')}
               </NavBtn>
               <NavBtn active={view === 'accounts'} icon={KeyRound} onClick={() => switchView('accounts')}>
-                Client Accounts
+                {t('Client accounts')}
               </NavBtn>
-              <div className="sb-group-label">Insights</div>
+              <div className="sb-group-label">{t('Insights')}</div>
               <NavBtn active={view === 'reports'} icon={BarChart3} onClick={() => switchView('reports')}>
-                Reports
+                {t('Reports')}
               </NavBtn>
               <NavBtn active={view === 'audit'} icon={ScrollText} onClick={() => switchView('audit')}>
-                Audit Log
+                {t('Audit log')}
               </NavBtn>
               <NavBtn active={view === 'settings'} icon={Settings} onClick={() => switchView('settings')}>
-                Settings
+                {t('Settings')}
               </NavBtn>
             </nav>
             <div className="sb-foot">
               <div className="sb-user">
                 <div className="sb-avatar"></div>
                 <div>
-                  <b>Admin</b>
-                  <span>Super Admin</span>
+                  <b>{t('Admin')}</b>
+                  <span>{t('Super Admin')}</span>
                 </div>
               </div>
               <button className="sb-logout" onClick={doLogout}>
                 <LogOut size={15} strokeWidth={2} />
-                Sign out
+                {t('Sign out')}
               </button>
             </div>
           </aside>
@@ -540,51 +476,54 @@ export default function App() {
           <main className="main">
             <div className="topbar">
               <div className="topbar-lead">
-                <button className="menu-toggle" onClick={() => setSidebarOpen((o) => !o)} aria-label="Open menu">
+                <button className="menu-toggle" onClick={() => setSidebarOpen((o) => !o)} aria-label={t('Open menu')}>
                   <Menu size={20} strokeWidth={2} />
                 </button>
                 <div>
-                  <h2 id="viewTitle">{titles[view][0]}</h2>
-                  <p className="sub" id="viewSub">
-                    {titles[view][1]}
-                  </p>
+                  <h2>{t(title)}</h2>
+                  <p className="sub">{t(sub)}</p>
                 </div>
               </div>
               <div className="top-actions">
                 <div className="search-box">
                   <Search size={16} strokeWidth={2} />
-                  <input placeholder="Search visitors, hosts, refs…" id="globalSearch" />
+                  <input
+                    placeholder={t('Search visitors, hosts, references…')}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    aria-label={t('Search')}
+                  />
+                  {query ? (
+                    <button className="search-clear" type="button" onClick={() => setQuery('')} aria-label={t('Clear search')}>
+                      <X size={14} />
+                    </button>
+                  ) : null}
                 </div>
+                <LanguageSwitch />
               </div>
             </div>
 
             <div className="content">
-              <section className={'view' + (view === 'dashboard' ? ' active' : '')} id="view-dashboard">
+              <section className={'view' + (view === 'dashboard' ? ' active' : '')}>
                 <div className="dash-hero">
                   <div>
-                    <span className="dash-kicker">
-                      <Sparkles size={14} strokeWidth={2.2} /> Command center
-                    </span>
-                    <h3>Welcome back</h3>
-                    <p>Live visitor traffic, pending approvals, and gate activity in one view.</p>
+                    <h3>{t('Welcome back')}</h3>
+                    <p>{t('Visitor traffic, pending approvals, and gate activity in one view.')}</p>
                   </div>
                   <div className="dash-hero-meta">
                     <CalendarDays size={18} strokeWidth={1.9} />
-                    {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                    {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                   </div>
                 </div>
                 <div className="stat-row">
                   <div className="stat-card">
                     <div className="top">
                       <div className="stat-ic" style={{ background: '#EFE9FF', color: 'var(--violet-2)' }}>
-                        <Users size={20} strokeWidth={1.9} />
+                        <CalendarDays size={20} strokeWidth={1.9} />
                       </div>
-                      <span className="trend up">
-                        <TrendingUp size={12} strokeWidth={2.4} /> 12%
-                      </span>
                     </div>
-                    <b id="statVisitorsToday">{visits.length}</b>
-                    <span className="lab">Visitors today</span>
+                    <b>{visitsToday.length}</b>
+                    <span className="lab">{t('Visits scheduled today')}</span>
                   </div>
                   <div className="stat-card">
                     <div className="top">
@@ -592,8 +531,8 @@ export default function App() {
                         <Clock size={20} strokeWidth={1.9} />
                       </div>
                     </div>
-                    <b id="statPending">{visits.filter((v) => v.status === 'pending').length}</b>
-                    <span className="lab">Pending approvals</span>
+                    <b>{pending.length}</b>
+                    <span className="lab">{t('Pending approvals')}</span>
                   </div>
                   <div className="stat-card">
                     <div className="top">
@@ -601,8 +540,8 @@ export default function App() {
                         <ShieldCheck size={20} strokeWidth={1.9} />
                       </div>
                     </div>
-                    <b id="statOnsite">{visits.filter((v) => v.status === 'approved').length}</b>
-                    <span className="lab">Currently on-site</span>
+                    <b>{approved.length}</b>
+                    <span className="lab">{t('Active passes')}</span>
                   </div>
                   <div className="stat-card">
                     <div className="top">
@@ -610,8 +549,8 @@ export default function App() {
                         <UserCheck size={20} strokeWidth={1.9} />
                       </div>
                     </div>
-                    <b id="statHosts">{hosts.filter((h) => h.status === 'active').length}</b>
-                    <span className="lab">Active hosts</span>
+                    <b>{hosts.filter((h) => h.status === 'active').length}</b>
+                    <span className="lab">{t('Active hosts')}</span>
                   </div>
                 </div>
 
@@ -623,29 +562,29 @@ export default function App() {
                           <ClipboardList size={16} strokeWidth={2} />
                         </span>
                         <div>
-                          <h3>Recent visit requests</h3>
-                          <p>Latest bookings across all hosts</p>
+                          <h3>{t('Recent visit requests')}</h3>
+                          <p>{t('Latest bookings across all hosts')}</p>
                         </div>
                       </div>
                       <button className="btn btn-ghost btn-sm" onClick={() => switchView('visits')}>
-                        View all
+                        {t('View all')}
                       </button>
                     </div>
                     <div className="table-wrap">
                       <table>
                         <thead>
                           <tr>
-                            <th>Visitor</th>
-                            <th>Host</th>
-                            <th>Date</th>
-                            <th>Status</th>
+                            <th>{t('Visitor')}</th>
+                            <th>{t('Host')}</th>
+                            <th>{t('Date')}</th>
+                            <th>{t('Status')}</th>
                           </tr>
                         </thead>
-                        <tbody id="dashRecentVisits">
-                          {recent.length ? (
-                            recent.map((v) => (
+                        <tbody>
+                          {visits.length ? (
+                            visits.slice(0, 5).map((v) => (
                               <tr key={v.id}>
-                                <td data-label="Visitor">
+                                <td data-label={t('Visitor')}>
                                   <div className="row-flex">
                                     <div className="avatar-sm">{initials(v.visitor)}</div>
                                     <div>
@@ -654,9 +593,9 @@ export default function App() {
                                     </div>
                                   </div>
                                 </td>
-                                <td data-label="Host">{v.host}</td>
-                                <td data-label="Date">{v.date}</td>
-                                <td data-label="Status">
+                                <td data-label={t('Host')}>{v.host}</td>
+                                <td data-label={t('Date')}>{formatDate(v.date)}</td>
+                                <td data-label={t('Status')}>
                                   <Badge status={v.status} />
                                 </td>
                               </tr>
@@ -664,7 +603,7 @@ export default function App() {
                           ) : (
                             <tr>
                               <td colSpan="4" className="empty">
-                                <EmptyState icon={Inbox}>No visit requests yet</EmptyState>
+                                <EmptyState icon={Inbox}>{t('No visit requests yet')}</EmptyState>
                               </td>
                             </tr>
                           )}
@@ -679,14 +618,14 @@ export default function App() {
                           <Activity size={16} strokeWidth={2} />
                         </span>
                         <div>
-                          <h3>Activity feed</h3>
-                          <p>System events</p>
+                          <h3>{t('Activity feed')}</h3>
+                          <p>{t('Latest system events')}</p>
                         </div>
                       </div>
                     </div>
-                    <div className="feed" id="dashFeed">
-                      {dashAudit.length ? (
-                        dashAudit.map((a, i) => {
+                    <div className="feed">
+                      {audit.length ? (
+                        audit.slice(0, 6).map((a, i) => {
                           const key = Object.keys(icons).find((k) => a.action.includes(k)) || 'default';
                           const [Icon, bg, col] = icons[key];
                           return (
@@ -696,7 +635,7 @@ export default function App() {
                               </div>
                               <div>
                                 <p>
-                                  <b>{a.actor}</b> — {a.action}
+                                  <b>{a.actor}</b> — {t(a.action)}
                                 </p>
                                 <span>{a.time}</span>
                               </div>
@@ -705,7 +644,7 @@ export default function App() {
                         })
                       ) : (
                         <div className="empty">
-                          <EmptyState icon={Clock}>No activity yet</EmptyState>
+                          <EmptyState icon={Clock}>{t('No activity yet')}</EmptyState>
                         </div>
                       )}
                     </div>
@@ -713,7 +652,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section className={'view' + (view === 'visitors' ? ' active' : '')} id="view-visitors">
+              <section className={'view' + (view === 'visitors' ? ' active' : '')}>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -721,44 +660,42 @@ export default function App() {
                         <Users size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>All visitors</h3>
-                        <p>Everyone who has requested a visit</p>
+                        <h3>{t('All visitors')}</h3>
+                        <p>{t('Everyone who has requested a visit')}</p>
                       </div>
                     </div>
-                    <span id="visitorCount" className="badge active">
-                      {visitors.length} total
-                    </span>
+                    <span className="badge active">{t('{count} total', { count: shownVisitors.length })}</span>
                   </div>
                   <div className="table-wrap">
                     <table>
                       <thead>
                         <tr>
-                          <th>Visitor</th>
-                          <th>Company</th>
-                          <th>Visits</th>
-                          <th>Last visit</th>
-                          <th>Status</th>
+                          <th>{t('Visitor')}</th>
+                          <th>{t('Company')}</th>
+                          <th>{t('Visits')}</th>
+                          <th>{t('Last visit')}</th>
+                          <th>{t('Status')}</th>
                           <th></th>
                         </tr>
                       </thead>
-                      <tbody id="visitorsTable">
-                        {visitors.length ? (
-                          visitors.map((v) => (
+                      <tbody>
+                        {shownVisitors.length ? (
+                          shownVisitors.map((v) => (
                             <tr key={v.id}>
-                              <td data-label="Visitor">
+                              <td data-label={t('Visitor')}>
                                 <div className="row-flex">
                                   <div className="avatar-sm">{initials(v.name)}</div>
                                   <div className="cell-main">{v.name}</div>
                                 </div>
                               </td>
-                              <td data-label="Company">{v.company}</td>
-                              <td data-label="Visits">{v.visits}</td>
-                              <td data-label="Last visit">{v.lastVisit}</td>
-                              <td data-label="Status">
+                              <td data-label={t('Company')}>{v.company}</td>
+                              <td data-label={t('Visits')}>{v.visits}</td>
+                              <td data-label={t('Last visit')}>{v.lastVisit}</td>
+                              <td data-label={t('Status')}>
                                 <Badge status={v.status} />
                               </td>
-                              <td data-label="Actions">
-                                <button className="btn-icon" onClick={() => viewVisitorDetail(v)} aria-label="View visitor">
+                              <td data-label={t('Actions')}>
+                                <button className="btn-icon" onClick={() => openVisitor(v)} aria-label={t('View details')}>
                                   <MoreHorizontal size={16} />
                                 </button>
                               </td>
@@ -767,7 +704,7 @@ export default function App() {
                         ) : (
                           <tr>
                             <td colSpan="6" className="empty">
-                              <EmptyState icon={Users}>No visitors yet</EmptyState>
+                              <EmptyState icon={Users}>{q ? t('No results for "{query}"', { query: q }) : t('No visitors yet')}</EmptyState>
                             </td>
                           </tr>
                         )}
@@ -777,7 +714,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section className={'view' + (view === 'visits' ? ' active' : '')} id="view-visits">
+              <section className={'view' + (view === 'visits' ? ' active' : '')}>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -785,25 +722,20 @@ export default function App() {
                         <ClipboardList size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>Visit requests</h3>
-                        <p>Approve, reject or review any request</p>
+                        <h3>{t('Visit requests')}</h3>
+                        <p>{t('Approve, reject, or review any request')}</p>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <select
-                        id="visitFilter"
-                        className="f-field"
-                        style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--line)', fontSize: 13 }}
-                        value={visitFilter}
-                        onChange={(e) => setVisitFilter(e.target.value)}
-                      >
-                        <option value="all">All statuses</option>
-                        <option value="pending">Pending</option>
-                        <option value="approved">Approved</option>
-                        <option value="rejected">Rejected</option>
+                    <div className="head-actions">
+                      <select className="filter-select" value={visitFilter} onChange={(e) => setVisitFilter(e.target.value)} aria-label={t('Filter by status')}>
+                        <option value="all">{t('All statuses')}</option>
+                        <option value="pending">{t('Pending')}</option>
+                        <option value="approved">{t('Approved')}</option>
+                        <option value="rejected">{t('Rejected')}</option>
+                        <option value="used">{t('Checked in')}</option>
                       </select>
-                      <button className="btn btn-violet btn-sm" onClick={openNewVisitModal}>
-                        <Plus size={14} strokeWidth={2.4} /> New request
+                      <button className="btn btn-violet btn-sm" onClick={() => setModal('visitModal')}>
+                        <Plus size={14} strokeWidth={2.4} /> {t('New request')}
                       </button>
                     </div>
                   </div>
@@ -811,51 +743,58 @@ export default function App() {
                     <table>
                       <thead>
                         <tr>
-                          <th>Reference</th>
-                          <th>Visitor</th>
-                          <th>Host</th>
-                          <th>Purpose</th>
-                          <th>Date / Time</th>
-                          <th>Status</th>
-                          <th>Actions</th>
+                          <th>{t('Reference')}</th>
+                          <th>{t('Visitor')}</th>
+                          <th>{t('Host')}</th>
+                          <th>{t('Purpose')}</th>
+                          <th>{t('Date / Time')}</th>
+                          <th>{t('Status')}</th>
+                          <th>{t('Actions')}</th>
                         </tr>
                       </thead>
-                      <tbody id="visitsTable">
-                        {filteredVisits.length ? (
-                          filteredVisits.map((v) => (
+                      <tbody>
+                        {shownVisits.length ? (
+                          shownVisits.map((v) => (
                             <tr key={v.id}>
-                              <td className="cell-main" data-label="Reference">{v.ref}</td>
-                              <td data-label="Visitor">{v.visitor}</td>
-                              <td data-label="Host">{v.host}</td>
-                              <td data-label="Purpose">{v.purpose}</td>
-                              <td data-label="Date / Time">
-                                {v.date} · {v.time}
+                              <td className="cell-main" data-label={t('Reference')}>
+                                {v.ref}
                               </td>
-                              <td data-label="Status">
+                              <td data-label={t('Visitor')}>
+                                <div className="cell-main">{v.visitor}</div>
+                                {v.company ? <div className="cell-sub">{v.company}</div> : null}
+                              </td>
+                              <td data-label={t('Host')}>{v.host}</td>
+                              <td data-label={t('Purpose')}>{v.purpose}</td>
+                              <td data-label={t('Date / Time')} className="nowrap">
+                                {formatDate(v.date)} · {v.time}
+                              </td>
+                              <td data-label={t('Status')}>
                                 <Badge status={v.status} />
                               </td>
-                              <td data-label="Actions">
-                                {v.status === 'pending' ? (
-                                  <>
-                                    <button className="btn btn-sm btn-teal" onClick={() => decideVisit(v.id, 'approved')}>
-                                      <Check size={13} strokeWidth={2.5} /> Approve
-                                    </button>{' '}
-                                    <button className="btn btn-sm btn-danger" onClick={() => decideVisit(v.id, 'rejected')}>
-                                      <X size={13} strokeWidth={2.5} /> Reject
+                              <td data-label={t('Actions')}>
+                                <div className="row-actions">
+                                  {v.status === 'pending' ? (
+                                    <>
+                                      <button className="btn btn-sm btn-teal" onClick={() => decideVisit(v.id, 'approved')}>
+                                        <Check size={13} strokeWidth={2.5} /> {t('Approve')}
+                                      </button>
+                                      <button className="btn btn-sm btn-danger" onClick={() => decideVisit(v.id, 'rejected')}>
+                                        <X size={13} strokeWidth={2.5} /> {t('Reject')}
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button className="btn-icon" onClick={() => openVisit(v)} aria-label={t('View details')}>
+                                      <MoreHorizontal size={16} />
                                     </button>
-                                  </>
-                                ) : (
-                                  <button className="btn-icon" onClick={() => viewVisitDetail(v)} aria-label="View visit">
-                                    <MoreHorizontal size={16} />
-                                  </button>
-                                )}
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           ))
                         ) : (
                           <tr>
                             <td colSpan="7" className="empty">
-                              <EmptyState icon={ClipboardList}>No requests match this filter</EmptyState>
+                              <EmptyState icon={ClipboardList}>{t('No requests match this filter')}</EmptyState>
                             </td>
                           </tr>
                         )}
@@ -865,7 +804,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section className={'view' + (view === 'passes' ? ' active' : '')} id="view-passes">
+              <section className={'view' + (view === 'passes' ? ' active' : '')}>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -873,8 +812,8 @@ export default function App() {
                         <QrCode size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>QR &amp; access passes</h3>
-                        <p>Every token issued, with live status</p>
+                        <h3>{t('QR & access passes')}</h3>
+                        <p>{t('Approved passes that can still be used at the gate')}</p>
                       </div>
                     </div>
                   </div>
@@ -882,30 +821,32 @@ export default function App() {
                     <table>
                       <thead>
                         <tr>
-                          <th>Reference</th>
-                          <th>Visitor</th>
-                          <th>PIN</th>
-                          <th>QR token</th>
-                          <th>Issued</th>
-                          <th>Status</th>
-                          <th>Actions</th>
+                          <th>{t('Reference')}</th>
+                          <th>{t('Visitor')}</th>
+                          <th>{t('Backup PIN')}</th>
+                          <th>{t('QR token')}</th>
+                          <th>{t('Visit date')}</th>
+                          <th>{t('Status')}</th>
+                          <th>{t('Actions')}</th>
                         </tr>
                       </thead>
-                      <tbody id="passesTable">
-                        {issued.length ? (
-                          issued.map((v) => (
+                      <tbody>
+                        {shownPasses.length ? (
+                          shownPasses.map((v) => (
                             <tr key={v.id}>
-                              <td className="cell-main" data-label="Reference">{v.ref}</td>
-                              <td data-label="Visitor">{v.visitor}</td>
-                              <td data-label="PIN">{v.pin || '—'}</td>
-                              <td data-label="QR token">{tokenRef(v.qrToken)}</td>
-                              <td data-label="Issued">{v.date}</td>
-                              <td data-label="Status">
+                              <td className="cell-main" data-label={t('Reference')}>
+                                {v.ref}
+                              </td>
+                              <td data-label={t('Visitor')}>{v.visitor}</td>
+                              <td data-label={t('Backup PIN')}>{v.pin || '—'}</td>
+                              <td data-label={t('QR token')}>{tokenRef(v.qrToken)}</td>
+                              <td data-label={t('Visit date')}>{formatDate(v.date)}</td>
+                              <td data-label={t('Status')}>
                                 <Badge status="active" />
                               </td>
-                              <td data-label="Actions">
+                              <td data-label={t('Actions')}>
                                 <button className="btn btn-sm btn-danger" onClick={() => revokePass(v.id)}>
-                                  <X size={13} strokeWidth={2.5} /> Revoke
+                                  <X size={13} strokeWidth={2.5} /> {t('Revoke')}
                                 </button>
                               </td>
                             </tr>
@@ -913,7 +854,7 @@ export default function App() {
                         ) : (
                           <tr>
                             <td colSpan="7" className="empty">
-                              <EmptyState icon={QrCode}>No passes issued yet</EmptyState>
+                              <EmptyState icon={QrCode}>{t('No active passes')}</EmptyState>
                             </td>
                           </tr>
                         )}
@@ -923,7 +864,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section className={'view' + (view === 'conversations' ? ' active' : '')} id="view-conversations">
+              <section className={'view' + (view === 'conversations' ? ' active' : '')}>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -931,8 +872,8 @@ export default function App() {
                         <MessagesSquare size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>WhatsApp conversations</h3>
-                        <p>Every incoming and outgoing message, grouped by visitor</p>
+                        <h3>{t('WhatsApp conversations')}</h3>
+                        <p>{t('Every incoming and outgoing message, grouped by visitor')}</p>
                       </div>
                     </div>
                   </div>
@@ -940,7 +881,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section className={'view' + (view === 'hosts' ? ' active' : '')} id="view-hosts">
+              <section className={'view' + (view === 'hosts' ? ' active' : '')}>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -948,128 +889,57 @@ export default function App() {
                         <UserCheck size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>Hosts</h3>
-                        <p>Department contacts who approve visits</p>
+                        <h3>{t('Hosts')}</h3>
+                        <p>{t('Visitors can only book people on this list')}</p>
                       </div>
                     </div>
-                    <button className="btn btn-violet btn-sm" onClick={() => openModal('hostModal')}>
-                      <Plus size={14} strokeWidth={2.4} /> Add host
+                    <button className="btn btn-violet btn-sm" onClick={() => setModal('hostModal')}>
+                      <Plus size={14} strokeWidth={2.4} /> {t('Add host')}
                     </button>
                   </div>
                   <div className="table-wrap">
                     <table>
                       <thead>
                         <tr>
-                          <th>Host</th>
-                          <th>Department</th>
-                          <th>Phone</th>
-                          <th>Visits hosted</th>
-                          <th>Status</th>
+                          <th>{t('Host')}</th>
+                          <th>{t('Department')}</th>
+                          <th>{t('Personal WhatsApp')}</th>
+                          <th>{t('Visits hosted')}</th>
+                          <th>{t('Status')}</th>
                           <th></th>
                         </tr>
                       </thead>
-                      <tbody id="hostsTable">
-                        {hosts.length ? (
-                          hosts.map((h) => {
-                            const count = visits.filter((v) => v.host === h.name).length;
-                            return (
-                              <tr key={h.id}>
-                                <td data-label="Host">
-                                  <div className="row-flex">
-                                    <div className="avatar-sm">{initials(h.name)}</div>
-                                    <div className="cell-main">{h.name}</div>
-                                  </div>
-                                </td>
-                                <td data-label="Department">{h.dept}</td>
-                                <td data-label="Phone">{h.phone}</td>
-                                <td data-label="Visits hosted">{count}</td>
-                                <td data-label="Status">
-                                  <Badge status={h.status} />
-                                </td>
-                                <td data-label="Actions">
-                                  <div className="row-actions">
-                                    {h.status === 'blocked' ? (
-                                      <button className="btn btn-sm btn-ghost" onClick={() => unblockHost(h.id)}>
-                                        Unblock
-                                      </button>
-                                    ) : (
-                                      <button className="btn btn-sm btn-ghost" onClick={() => blockHost(h.id)}>
-                                        Block
-                                      </button>
-                                    )}
-                                    <button className="btn btn-sm btn-danger" onClick={() => deleteHost(h.id, h.name)}>
-                                      Delete
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })
-                        ) : (
-                          <tr>
-                            <td colSpan="6" className="empty">
-                              <EmptyState icon={UserCheck}>No hosts added yet</EmptyState>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'accounts' ? ' active' : '')} id="view-accounts">
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <KeyRound size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>Client login accounts</h3>
-                        <p>Create the username &amp; password a client uses to sign into the Client Portal</p>
-                      </div>
-                    </div>
-                    <button className="btn btn-violet btn-sm" onClick={() => openModal('accountModal')}>
-                      <UserPlus size={14} strokeWidth={2.4} /> Create account
-                    </button>
-                  </div>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Client</th>
-                          <th>Username</th>
-                          <th>Role</th>
-                          <th>Created</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody id="accountsTable">
-                        {accounts.length ? (
-                          accounts.map((a) => (
-                            <tr key={a.id}>
-                              <td className="cell-main" data-label="Client">{a.name}</td>
-                              <td data-label="Username">{a.username}</td>
-                              <td data-label="Role">{a.role}</td>
-                              <td data-label="Created">{a.created}</td>
-                              <td data-label="Status">
-                                <Badge status={a.status} />
+                      <tbody>
+                        {shownHosts.length ? (
+                          shownHosts.map((h) => (
+                            <tr key={h.id}>
+                              <td data-label={t('Host')}>
+                                <div className="row-flex">
+                                  <div className="avatar-sm">{initials(h.name)}</div>
+                                  <div className="cell-main">{h.name}</div>
+                                </div>
                               </td>
-                              <td data-label="Actions">
+                              <td data-label={t('Department')}>{h.dept && h.dept !== '—' ? h.dept : '—'}</td>
+                              <td data-label={t('Personal WhatsApp')} className="nowrap">
+                                {h.phone ? `+${String(h.phone).replace(/\D/g, '')}` : '—'}
+                              </td>
+                              <td data-label={t('Visits hosted')}>{visits.filter((v) => v.host === h.name).length}</td>
+                              <td data-label={t('Status')}>
+                                <Badge status={h.status} />
+                              </td>
+                              <td data-label={t('Actions')}>
                                 <div className="row-actions">
-                                  {a.status === 'blocked' ? (
-                                    <button className="btn btn-sm btn-ghost" onClick={() => unblockAccount(a.id)}>
-                                      Unblock
+                                  {h.status === 'blocked' ? (
+                                    <button className="btn btn-sm btn-ghost" onClick={() => unblockHost(h.id)}>
+                                      {t('Unblock')}
                                     </button>
                                   ) : (
-                                    <button className="btn btn-sm btn-ghost" onClick={() => blockAccount(a.id)}>
-                                      Block
+                                    <button className="btn btn-sm btn-ghost" onClick={() => blockHost(h.id)}>
+                                      {t('Block')}
                                     </button>
                                   )}
-                                  <button className="btn btn-sm btn-danger" onClick={() => deleteAccount(a.id, a.name)}>
-                                    Delete
+                                  <button className="btn btn-sm btn-danger" onClick={() => deleteHost(h.id, h.name)}>
+                                    {t('Delete')}
                                   </button>
                                 </div>
                               </td>
@@ -1078,18 +948,90 @@ export default function App() {
                         ) : (
                           <tr>
                             <td colSpan="6" className="empty">
-                              <EmptyState icon={KeyRound}>No client accounts yet — create the first one</EmptyState>
+                              <EmptyState icon={UserCheck}>{t('No hosts added yet')}</EmptyState>
                             </td>
                           </tr>
                         )}
                       </tbody>
                     </table>
                   </div>
-                  <p className="mini-note">Share the username and password with your host so they can sign into the client portal.</p>
                 </div>
               </section>
 
-              <section className={'view' + (view === 'reports' ? ' active' : '')} id="view-reports">
+              <section className={'view' + (view === 'accounts' ? ' active' : '')}>
+                <div className="panel">
+                  <div className="panel-head">
+                    <div className="panel-title">
+                      <span className="panel-ic">
+                        <KeyRound size={16} strokeWidth={2} />
+                      </span>
+                      <div>
+                        <h3>{t('Client Portal accounts')}</h3>
+                        <p>{t('Create the username and password staff use to sign in to the Client Portal')}</p>
+                      </div>
+                    </div>
+                    <button className="btn btn-violet btn-sm" onClick={() => setModal('accountModal')}>
+                      <UserPlus size={14} strokeWidth={2.4} /> {t('Create account')}
+                    </button>
+                  </div>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>{t('Name')}</th>
+                          <th>{t('Username')}</th>
+                          <th>{t('Role')}</th>
+                          <th>{t('Created')}</th>
+                          <th>{t('Status')}</th>
+                          <th>{t('Actions')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shownAccounts.length ? (
+                          shownAccounts.map((a) => (
+                            <tr key={a.id}>
+                              <td className="cell-main" data-label={t('Name')}>
+                                {a.name}
+                              </td>
+                              <td data-label={t('Username')}>{a.username}</td>
+                              <td data-label={t('Role')}>{t(a.role)}</td>
+                              <td data-label={t('Created')}>{a.created}</td>
+                              <td data-label={t('Status')}>
+                                <Badge status={a.status} />
+                              </td>
+                              <td data-label={t('Actions')}>
+                                <div className="row-actions">
+                                  {a.status === 'blocked' ? (
+                                    <button className="btn btn-sm btn-ghost" onClick={() => unblockAccount(a.id)}>
+                                      {t('Unblock')}
+                                    </button>
+                                  ) : (
+                                    <button className="btn btn-sm btn-ghost" onClick={() => blockAccount(a.id)}>
+                                      {t('Block')}
+                                    </button>
+                                  )}
+                                  <button className="btn btn-sm btn-danger" onClick={() => deleteAccount(a.id, a.name)}>
+                                    {t('Delete')}
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan="6" className="empty">
+                              <EmptyState icon={KeyRound}>{t('No accounts yet — create the first one')}</EmptyState>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mini-note">{t('Share the username and password with the staff member so they can sign in to the Client Portal.')}</p>
+                </div>
+              </section>
+
+              <section className={'view' + (view === 'reports' ? ' active' : '')}>
                 <div className="stat-row">
                   <div className="stat-card">
                     <div className="top">
@@ -1097,8 +1039,8 @@ export default function App() {
                         <ClipboardList size={20} strokeWidth={1.9} />
                       </div>
                     </div>
-                    <b id="repTotal">{visits.length}</b>
-                    <span className="lab">Total visits recorded</span>
+                    <b>{visits.length}</b>
+                    <span className="lab">{t('Total visit requests')}</span>
                   </div>
                   <div className="stat-card">
                     <div className="top">
@@ -1106,8 +1048,8 @@ export default function App() {
                         <Check size={20} strokeWidth={1.9} />
                       </div>
                     </div>
-                    <b id="repApproved">{visits.filter((v) => v.status === 'approved').length}</b>
-                    <span className="lab">Approved</span>
+                    <b>{approved.length + checkedIn.length}</b>
+                    <span className="lab">{t('Approved')}</span>
                   </div>
                   <div className="stat-card">
                     <div className="top">
@@ -1115,17 +1057,17 @@ export default function App() {
                         <X size={20} strokeWidth={1.9} />
                       </div>
                     </div>
-                    <b id="repRejected">{visits.filter((v) => v.status === 'rejected').length}</b>
-                    <span className="lab">Rejected</span>
+                    <b>{visits.filter((v) => v.status === 'rejected').length}</b>
+                    <span className="lab">{t('Rejected')}</span>
                   </div>
                   <div className="stat-card">
                     <div className="top">
                       <div className="stat-ic" style={{ background: '#EAF3FF', color: '#2563EB' }}>
-                        <TrendingUp size={20} strokeWidth={1.9} />
+                        <ScanLine size={20} strokeWidth={1.9} />
                       </div>
                     </div>
-                    <b id="repAvg">96%</b>
-                    <span className="lab">Approved within 5 min</span>
+                    <b>{checkedIn.length}</b>
+                    <span className="lab">{t('Checked in at the gate')}</span>
                   </div>
                 </div>
                 <div className="panel">
@@ -1135,21 +1077,21 @@ export default function App() {
                         <Download size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>Export data</h3>
-                        <p>Download records for compliance or offline review</p>
+                        <h3>{t('Export data')}</h3>
+                        <p>{t('Download records for compliance or offline review')}</p>
                       </div>
                     </div>
                   </div>
-                  <div style={{ padding: '22px 24px', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  <div className="export-row">
                     <button className="btn btn-ghost" onClick={() => exportCSV('visits')}>
-                      <Download size={15} /> Export visits (CSV)
+                      <Download size={15} /> {t('Visits (CSV)')}
                     </button>
                     <button className="btn btn-ghost" onClick={() => exportCSV('visitors')}>
-                      <Download size={15} /> Export visitors (CSV)
+                      <Download size={15} /> {t('Visitors (CSV)')}
                     </button>
                     <button className="btn btn-ghost" onClick={() => exportCSV('audit')}>
-                      <Download size={15} /> Export audit log (CSV)
-        </button>
+                      <Download size={15} /> {t('Audit log (CSV)')}
+                    </button>
                   </div>
                 </div>
                 <div className="panel">
@@ -1159,40 +1101,35 @@ export default function App() {
                         <Building2 size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>Visits by department</h3>
+                        <h3>{t('Visits by department')}</h3>
                       </div>
                     </div>
                   </div>
-                  <div style={{ padding: '22px 24px' }} id="deptBreakdown">
+                  <div className="dept-bars">
                     {Object.keys(depts).length ? (
-                      Object.entries(depts).map(([d, c]) => (
-                        <div style={{ marginBottom: 14 }} key={d}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-                            <span>{d}</span>
-                            <b>{c}</b>
+                      Object.entries(depts)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([d, c]) => (
+                          <div className="dept-bar" key={d}>
+                            <div className="dept-bar-head">
+                              <span>{d}</span>
+                              <b>{c}</b>
+                            </div>
+                            <div className="dept-bar-track">
+                              <div className="dept-bar-fill" style={{ width: `${(c / maxDept) * 100}%` }} />
+                            </div>
                           </div>
-                          <div style={{ height: 8, borderRadius: 6, background: 'var(--paper)' }}>
-                            <div
-                              style={{
-                                height: '100%',
-                                width: (c / max) * 100 + '%',
-                                borderRadius: 6,
-                                background: 'linear-gradient(90deg,var(--violet),var(--teal))',
-                              }}
-                            ></div>
-                          </div>
-                        </div>
-                      ))
+                        ))
                     ) : (
                       <p className="mini-note" style={{ padding: 0 }}>
-                        No data yet
+                        {t('No data yet')}
                       </p>
                     )}
                   </div>
                 </div>
-      </section>
+              </section>
 
-              <section className={'view' + (view === 'audit' ? ' active' : '')} id="view-audit">
+              <section className={'view' + (view === 'audit' ? ' active' : '')}>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -1200,8 +1137,8 @@ export default function App() {
                         <ScrollText size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>Audit log</h3>
-                        <p>Every approval, rejection, scan and account action</p>
+                        <h3>{t('Audit log')}</h3>
+                        <p>{t('Every approval, rejection, gate scan, and account change')}</p>
                       </div>
                     </div>
                   </div>
@@ -1209,26 +1146,32 @@ export default function App() {
                     <table>
                       <thead>
                         <tr>
-                          <th>Time</th>
-                          <th>Actor</th>
-                          <th>Action</th>
-                          <th>Details</th>
+                          <th>{t('Time')}</th>
+                          <th>{t('Actor')}</th>
+                          <th>{t('Action')}</th>
+                          <th>{t('Details')}</th>
                         </tr>
                       </thead>
-                      <tbody id="auditTable">
-                        {audit.length ? (
-                          audit.map((a, i) => (
+                      <tbody>
+                        {shownAudit.length ? (
+                          shownAudit.map((a, i) => (
                             <tr key={i}>
-                              <td className="cell-sub" data-label="Time">{a.time}</td>
-                              <td className="cell-main" data-label="Actor">{a.actor}</td>
-                              <td data-label="Action">{a.action}</td>
-                              <td className="cell-sub" data-label="Details">{a.details}</td>
+                              <td className="cell-sub nowrap" data-label={t('Time')}>
+                                {a.time}
+                              </td>
+                              <td className="cell-main" data-label={t('Actor')}>
+                                {a.actor}
+                              </td>
+                              <td data-label={t('Action')}>{t(a.action)}</td>
+                              <td className="cell-sub" data-label={t('Details')}>
+                                {a.details}
+                              </td>
                             </tr>
                           ))
                         ) : (
                           <tr>
                             <td colSpan="4" className="empty">
-                              <EmptyState icon={ScrollText}>No audit events yet</EmptyState>
+                              <EmptyState icon={ScrollText}>{t('No audit events yet')}</EmptyState>
                             </td>
                           </tr>
                         )}
@@ -1238,7 +1181,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section className={'view' + (view === 'settings' ? ' active' : '')} id="view-settings">
+              <section className={'view' + (view === 'settings' ? ' active' : '')}>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -1246,56 +1189,65 @@ export default function App() {
                         <Building2 size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>Organization</h3>
+                        <h3>{t('Organisation')}</h3>
                       </div>
                     </div>
                   </div>
                   <div className="form-grid">
                     <div className="f-field">
-                      <label>Organization name</label>
+                      <label htmlFor="setOrgName">{t('Organisation name')}</label>
                       <input id="setOrgName" value={setOrgName} onChange={(e) => setSetOrgName(e.target.value)} />
                     </div>
                     <div className="f-field">
-                      <label>WhatsApp business number</label>
-                      <input id="setPhone" value={setPhone} onChange={(e) => setSetPhone(e.target.value)} />
+                      <label htmlFor="setPhone">{t('Company WhatsApp number')}</label>
+                      <input id="setPhone" value={setPhone} onChange={(e) => setSetPhone(e.target.value)} placeholder="+267 71 000 000" />
                     </div>
                     <div className="f-field span2">
-                      <label>Support email</label>
+                      <label htmlFor="setEmail">{t('Support email')}</label>
                       <input id="setEmail" value={setEmail} onChange={(e) => setSetEmail(e.target.value)} />
                     </div>
                   </div>
                   <div className="form-actions">
-                    <button
-                      className="btn btn-violet"
-                      onClick={async () => {
-                        try {
-                          await api.put('/settings', { orgName: setOrgName, phone: setPhone, email: setEmail });
-                          toast('Settings saved');
-                        } catch {
-                          toast('Could not save settings', true);
-                        }
-                      }}
-                    >
-                      Save changes
+                    <button className="btn btn-violet" onClick={saveSettings}>
+                      {t('Save changes')}
                     </button>
                   </div>
                 </div>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
-                      <span className="panel-ic" style={{ background: 'var(--bad-bg)', color: 'var(--bad)' }}>
-                        <AlertTriangle size={16} strokeWidth={2} />
+                      <span className="panel-ic">
+                        <Settings size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>Refresh data</h3>
-                        <p>Reload visits, hosts, and settings from the server</p>
+                        <h3>{t('Preferences')}</h3>
+                        <p>{t('Language and data')}</p>
                       </div>
                     </div>
                   </div>
-                  <div style={{ padding: '22px 24px' }}>
-                    <button className="btn btn-danger" onClick={resetAllData}>
-                      Refresh from server
-                    </button>
+                  <div className="pref-rows">
+                    <div className="pref-row">
+                      <div>
+                        <b>{t('Language')}</b>
+                        <p>{t('English is the default. Setswana is available for the whole panel.')}</p>
+                      </div>
+                      <LanguageSwitch className="lang-switch-lg" />
+                    </div>
+                    <div className="pref-row">
+                      <div>
+                        <b>{t('Refresh data')}</b>
+                        <p>{t('Reload visits, hosts, and settings from the server')}</p>
+                      </div>
+                      <button
+                        className="btn btn-ghost"
+                        onClick={async () => {
+                          await fetchAll();
+                          toast(t('Data refreshed'));
+                        }}
+                      >
+                        <RefreshCw size={15} /> {t('Refresh')}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -1304,165 +1256,149 @@ export default function App() {
         </div>
       </div>
 
-      <div
-        className={'modal-bg' + (modal === 'hostModal' ? ' on' : '')}
-        id="hostModal"
-        onClick={(e) => {
-          if (e.target.id === 'hostModal') closeModal();
-        }}
-      >
-        <div className="modal">
+      <div className={'modal-bg' + (modal === 'hostModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
+        <div className="modal" role="dialog" aria-modal="true" aria-label={t('Add a host')}>
           <div className="modal-head">
-            <h3>Add a host</h3>
-            <button className="modal-close" onClick={closeModal} aria-label="Close">
+            <h3>{t('Add a host')}</h3>
+            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
               <X size={14} strokeWidth={2.2} />
             </button>
           </div>
           <div className="form-grid full">
             <div className="f-field">
-              <label>Full name</label>
-              <input id="hName" placeholder="e.g. Boikarabelo Ramaretlwa" value={hName} onChange={(e) => setHName(e.target.value)} />
+              <label htmlFor="hName">{t('Full name')}</label>
+              <input id="hName" placeholder="Boikarabelo Ramaretlwa" value={hName} onChange={(e) => setHName(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Department</label>
-              <input id="hDept" placeholder="e.g. Technology Planning" value={hDept} onChange={(e) => setHDept(e.target.value)} />
+              <label htmlFor="hDept">{t('Department')}</label>
+              <input id="hDept" placeholder="Technology Planning" value={hDept} onChange={(e) => setHDept(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Phone (WhatsApp)</label>
-              <input id="hPhone" placeholder="+267 00 000 000" value={hPhone} onChange={(e) => setHPhone(e.target.value)} />
+              <label htmlFor="hPhone">{t('Personal WhatsApp')}</label>
+              <input id="hPhone" placeholder="+267 71 000 000" value={hPhone} onChange={(e) => setHPhone(e.target.value)} />
             </div>
           </div>
           <div className="form-actions">
             <button className="btn btn-ghost" onClick={closeModal}>
-              Cancel
+              {t('Cancel')}
             </button>
             <button className="btn btn-violet" onClick={saveHost}>
-              Add host
+              {t('Add host')}
             </button>
           </div>
         </div>
       </div>
 
-      <div
-        className={'modal-bg' + (modal === 'accountModal' ? ' on' : '')}
-        id="accountModal"
-        onClick={(e) => {
-          if (e.target.id === 'accountModal') closeModal();
-        }}
-      >
-        <div className="modal">
+      <div className={'modal-bg' + (modal === 'accountModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
+        <div className="modal" role="dialog" aria-modal="true" aria-label={t('Create account')}>
           <div className="modal-head">
-            <h3>Create client account</h3>
-            <button className="modal-close" onClick={closeModal} aria-label="Close">
+            <h3>{t('Create account')}</h3>
+            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
               <X size={14} strokeWidth={2.2} />
             </button>
           </div>
           <div className="form-grid full">
             <div className="f-field">
-              <label>Client / company name</label>
-              <input id="aName" placeholder="e.g. Michael Ntsima" value={aName} onChange={(e) => setAName(e.target.value)} />
+              <label htmlFor="aName">{t('Name')}</label>
+              <input id="aName" placeholder="Michael Ntsima" value={aName} onChange={(e) => setAName(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Username</label>
-              <input id="aUser" placeholder="e.g. michael.n" value={aUser} onChange={(e) => setAUser(e.target.value)} />
+              <label htmlFor="aUser">{t('Username')}</label>
+              <input id="aUser" placeholder="michael.n" value={aUser} onChange={(e) => setAUser(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Password</label>
-              <input id="aPass" type="text" placeholder="Set a password" value={aPass} onChange={(e) => setAPass(e.target.value)} />
+              <label htmlFor="aPass">{t('Password')}</label>
+              <input id="aPass" type="text" placeholder={t('Set a password')} value={aPass} onChange={(e) => setAPass(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Role</label>
+              <label htmlFor="aRole">{t('Role')}</label>
               <select id="aRole" value={aRole} onChange={(e) => setARole(e.target.value)}>
-                <option>Host</option>
-                <option>Security</option>
-                <option>Client Admin</option>
+                {ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {t(r)}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
           <div className="form-actions">
             <button className="btn btn-ghost" onClick={closeModal}>
-              Cancel
+              {t('Cancel')}
             </button>
             <button className="btn btn-violet" onClick={saveAccount}>
-              Create account
+              {t('Create account')}
             </button>
           </div>
         </div>
       </div>
 
-      <div
-        className={'modal-bg' + (modal === 'visitModal' ? ' on' : '')}
-        id="visitModal"
-        onClick={(e) => {
-          if (e.target.id === 'visitModal') closeModal();
-        }}
-      >
-        <div className="modal">
+      <div className={'modal-bg' + (modal === 'visitModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
+        <div className="modal" role="dialog" aria-modal="true" aria-label={t('New visit request')}>
           <div className="modal-head">
-            <h3>New visit request</h3>
-            <button className="modal-close" onClick={closeModal} aria-label="Close">
+            <h3>{t('New visit request')}</h3>
+            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
               <X size={14} strokeWidth={2.2} />
             </button>
           </div>
           <div className="form-grid full">
             <div className="f-field">
-              <label>Visitor name</label>
-              <input id="vName" placeholder="Full name" value={vName} onChange={(e) => setVName(e.target.value)} />
+              <label htmlFor="vName">{t('Visitor name')}</label>
+              <input id="vName" placeholder={t('Full name')} value={vName} onChange={(e) => setVName(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Company</label>
-              <input id="vCompany" placeholder="Company / organization" value={vCompany} onChange={(e) => setVCompany(e.target.value)} />
+              <label htmlFor="vCompany">{t('Company')}</label>
+              <input id="vCompany" placeholder={t('Company / organisation')} value={vCompany} onChange={(e) => setVCompany(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Host</label>
+              <label htmlFor="vHost">{t('Host')}</label>
               <select id="vHost" value={vHost} onChange={(e) => setVHost(e.target.value)}>
                 {hosts.map((h) => (
                   <option value={h.name} key={h.id}>
-                    {h.name} — {h.dept}
+                    {h.name}
+                    {h.dept && h.dept !== '—' ? ` — ${h.dept}` : ''}
                   </option>
                 ))}
               </select>
             </div>
             <div className="f-field">
-              <label>Purpose</label>
-              <input id="vPurpose" placeholder="Reason for visit" value={vPurpose} onChange={(e) => setVPurpose(e.target.value)} />
+              <label htmlFor="vPurpose">{t('Purpose')}</label>
+              <input id="vPurpose" placeholder={t('Reason for the visit')} value={vPurpose} onChange={(e) => setVPurpose(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Date</label>
+              <label htmlFor="vDate">{t('Date')}</label>
               <input id="vDate" type="date" value={vDate} onChange={(e) => setVDate(e.target.value)} />
             </div>
             <div className="f-field">
-              <label>Time</label>
+              <label htmlFor="vTime">{t('Time')}</label>
               <input id="vTime" type="time" value={vTime} onChange={(e) => setVTime(e.target.value)} />
             </div>
           </div>
           <div className="form-actions">
             <button className="btn btn-ghost" onClick={closeModal}>
-              Cancel
+              {t('Cancel')}
             </button>
             <button className="btn btn-violet" onClick={saveVisit}>
-              Submit request
+              {t('Submit request')}
             </button>
           </div>
         </div>
       </div>
 
-      <div
-        className={'modal-bg' + (modal === 'detailModal' ? ' on' : '')}
-        id="detailModal"
-        onClick={(e) => {
-          if (e.target.id === 'detailModal') closeModal();
-        }}
-      >
-        <div className="modal">
+      <div className={'modal-bg' + (modal === 'detailModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
+        <div className="modal" role="dialog" aria-modal="true" aria-label={detail?.title || t('Details')}>
           <div className="modal-head">
-            <h3 id="detailTitle">{detailTitle}</h3>
-            <button className="modal-close" onClick={closeModal} aria-label="Close">
+            <h3>{detail?.title || t('Details')}</h3>
+            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
               <X size={14} strokeWidth={2.2} />
             </button>
           </div>
-          <div className="modal-body" id="detailBody">
-            {detailBody}
+          <div className="modal-body">
+            {(detail?.rows || []).map(([k, v]) => (
+              <div className="detail-row" key={k}>
+                <span className="k">{t(k)}</span>
+                <span className="v">{v}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

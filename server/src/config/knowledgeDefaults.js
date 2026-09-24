@@ -3,7 +3,7 @@ export const FIRST_TIME_WELCOME =
 
 export const KNOWLEDGE_DEFAULTS = {
   greeting: FIRST_TIME_WELCOME,
-  instruction: 'Always ask who they are visiting (host name or department). Notify only that saved host. Answer only from the company knowledge base. Never invent services, staff, or prices. Always ask for company name. Office hours are 8am–5pm.',
+  instruction: 'Answer only from this knowledge base. Never invent services, staff, or prices. Office hours are 8am–5pm.',
   faqs: [
     {
       question: 'Where is the office?',

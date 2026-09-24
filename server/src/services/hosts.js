@@ -6,48 +6,7 @@ function label(host) {
     name: host.name,
     department: host.department || '',
     phone: host.phone || '',
-  };
-}
-
-export async function matchHosts(query) {
-  const q = String(query || '').trim();
-  if (!q) return [];
-  const exact = await Host.findByName(q);
-  if (exact && exact.status === 'active') return [exact];
-  const rows = await Host.search(q);
-  if (rows?.length) return rows;
-  const tokens = q
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((part) => part.length > 2);
-  if (!tokens.length) return [];
-  const all = await Host.listActive();
-  return (all || []).filter((host) => {
-    const hay = `${host.name} ${host.department || ''}`.toLowerCase();
-    return tokens.some((token) => hay.includes(token));
-  });
-}
-
-export async function resolveHostForNotify(query) {
-  const matches = await matchHosts(query);
-  if (!matches.length) {
-    return {
-      error: 'No host in the company directory matches that name or department. Ask the visitor for the host name or department. Do not invent a host.',
-    };
-  }
-  if (matches.length === 1) {
-    const host = matches[0];
-    if (!host.phone) {
-      return {
-        error: `${host.name} is in the directory but has no WhatsApp number saved. Ask for another host.`,
-        matches: [label(host)],
-      };
-    }
-    return { host: label(host) };
-  }
-  return {
-    error: 'Several hosts match. Ask the visitor to pick one by name.',
-    matches: matches.map(label),
+    status: host.status,
   };
 }
 

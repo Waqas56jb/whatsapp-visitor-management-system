@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Building2, Link2, QrCode, RefreshCw, Unplug } from 'lucide-react';
 import api from '../api/client';
+import { useI18n } from '../i18n';
 
 const LINK_KEY = 'botho_company_wa';
 
@@ -14,6 +15,7 @@ function readSaved() {
 }
 
 export default function WhatsAppLink({ onToast }) {
+  const { t } = useI18n();
   const saved = readSaved();
   const [status, setStatus] = useState(
     saved?.connected
@@ -49,40 +51,37 @@ export default function WhatsAppLink({ onToast }) {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 1500);
-    return () => clearInterval(t);
+    const timer = setInterval(load, 1500);
+    return () => clearInterval(timer);
   }, []);
 
   async function connect() {
     if (status.connected) {
-      onToast?.('Company number is already linked. No new QR will be issued.');
+      onToast?.(t('The company number is already linked.'));
       return;
     }
     setBusy(true);
     try {
       const { data } = await api.post('/host/whatsapp/connect');
       apply(data);
-      if (data?.connected) onToast?.('Company WhatsApp is already linked');
-      else onToast?.('Scan this QR with the company WhatsApp number');
+      onToast?.(data?.connected ? t('The company number is already linked.') : t('Scan this QR with the company WhatsApp'));
     } catch (err) {
-      onToast?.(err.response?.data?.error || 'Could not start company WhatsApp link', true);
+      onToast?.(err.response?.data?.error || t('Could not start the WhatsApp link'), true);
     } finally {
       setBusy(false);
     }
   }
 
   async function disconnect() {
-    if (!window.confirm('Unlink the company WhatsApp? Every client account will lose this number until it is scanned again.')) {
-      return;
-    }
+    if (!window.confirm(t('Unlink the company WhatsApp? Visitors will get no replies until it is scanned again.'))) return;
     setBusy(true);
     try {
       const { data } = await api.post('/host/whatsapp/disconnect');
       sessionStorage.removeItem(LINK_KEY);
       setStatus(data || { connected: false });
-      onToast?.('Company WhatsApp unlinked');
+      onToast?.(t('Company WhatsApp unlinked'));
     } catch (err) {
-      onToast?.(err.response?.data?.error || 'Could not unlink', true);
+      onToast?.(err.response?.data?.error || t('Could not unlink'), true);
     } finally {
       setBusy(false);
     }
@@ -92,7 +91,17 @@ export default function WhatsAppLink({ onToast }) {
     .split('@')[0]
     .split(':')[0]
     .replace(/\D/g, '');
-  const linkedNumber = linkedDigits ? `+${linkedDigits}` : status.user?.name || 'Company WhatsApp';
+  const linkedNumber = linkedDigits ? `+${linkedDigits}` : status.user?.name || t('Company WhatsApp');
+
+  const badge = status.connected
+    ? status.reconnecting
+      ? t('Linked · reconnecting')
+      : t('Linked')
+    : status.qrDataUrl
+      ? t('Waiting for scan')
+      : status.connecting
+        ? t('Linking…')
+        : t('Not linked');
 
   return (
     <div className="ap-panel">
@@ -102,56 +111,45 @@ export default function WhatsAppLink({ onToast }) {
             <Building2 size={16} strokeWidth={2} />
           </span>
           <div>
-            <h3>Please scan company number</h3>
-            <p>One organisation WhatsApp only. Every client account sees this same link — no extra QR per account.</p>
+            <h3>{t('Company WhatsApp')}</h3>
+            <p>{t('Visitors message this one company number to book. Every portal account shares the same link.')}</p>
           </div>
         </div>
-        <span className={'ap-badge ' + (status.connected ? 'approved' : 'pending')}>
-          {status.connected
-            ? status.reconnecting
-              ? 'Linked · connecting'
-              : 'Company linked'
-            : status.qrDataUrl
-              ? 'Waiting for company scan'
-              : status.connecting
-                ? 'Linking…'
-                : 'Not linked'}
-        </span>
+        <span className={'ap-badge ' + (status.connected ? 'approved' : 'pending')}>{badge}</span>
       </div>
       <div className="wa-link-body">
         {status.connected ? (
           <div className="wa-linked">
             <Link2 size={28} strokeWidth={1.7} />
-            <b>Company number linked: {linkedNumber}</b>
+            <b>{t('Linked number: {number}', { number: linkedNumber })}</b>
             <p>
               {status.reconnecting
-                ? 'Session is reconnecting. The visitor AI stays on this company number — no new QR will be issued.'
-                : 'Visitor AI is active on this company WhatsApp. Hosts are notified on the personal numbers saved in Company hosts.'}
+                ? t('The session is reconnecting. No new QR is needed.')
+                : t('The visitor assistant is live on this number. Hosts are notified on their personal numbers from the Hosts page.')}
             </p>
             <button className="ap-btn ap-btn-danger ap-btn-sm" onClick={disconnect} disabled={busy}>
-              <Unplug size={14} /> Unlink company number
+              <Unplug size={14} /> {t('Unlink company number')}
             </button>
           </div>
         ) : (
           <>
-            <p className="wa-scan-banner">Please scan company number</p>
             <div className="wa-qr-wrap">
               {status.qrDataUrl ? (
-                <img src={status.qrDataUrl} alt="Company WhatsApp QR" />
+                <img src={status.qrDataUrl} alt={t('Company WhatsApp QR code')} />
               ) : (
                 <div className="wa-qr-empty">
                   <QrCode size={36} strokeWidth={1.5} />
-                  <p>Generate the company QR, then scan it with the organisation WhatsApp</p>
+                  <p>{t('Generate the QR, then scan it with the company WhatsApp')}</p>
                 </div>
               )}
             </div>
             <ol className="wa-steps">
-              <li>Use the company WhatsApp — not a host’s personal phone</li>
-              <li>WhatsApp → Linked devices → Link a device</li>
-              <li>Scan this QR. Other accounts will see this same linked number</li>
+              <li>{t('Use the company WhatsApp — not a host’s personal phone')}</li>
+              <li>{t('In WhatsApp open Linked devices → Link a device')}</li>
+              <li>{t('Scan this QR code')}</li>
             </ol>
             <button className="ap-btn ap-btn-teal" onClick={connect} disabled={busy || status.connected}>
-              <RefreshCw size={15} /> {status.qrDataUrl ? 'Show company QR' : 'Generate company QR'}
+              <RefreshCw size={15} /> {status.qrDataUrl ? t('Show QR') : t('Generate QR')}
             </button>
           </>
         )}

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Building2, Eye, EyeOff, Loader2, Lock, QrCode, ShieldCheck, Sparkles, User } from 'lucide-react';
+import { ArrowLeft, ClipboardList, Eye, EyeOff, Loader2, Lock, QrCode, ShieldCheck, Sparkles, User } from 'lucide-react';
 import { toast } from 'react-toastify';
 import ScreenLoader from './ScreenLoader';
 import api, { setClientToken } from '../api/client';
+import { LanguageSwitch, useI18n } from '../i18n';
 
 function BrandMark() {
   return (
@@ -21,6 +22,7 @@ function BrandMark() {
 }
 
 export default function LoginScreen({ on, onClose, onSuccess }) {
+  const { t } = useI18n();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -35,30 +37,25 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
   async function doClientLogin(e) {
     e?.preventDefault();
     const u = username.trim();
-    const p = password;
-    if (!u || !p) {
-      toast.error('Enter your username and password.');
+    if (!u || !password) {
+      toast.error(t('Enter your username and password.'));
       return;
     }
     setError('');
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/client/login', { username: u, password: p });
+      const { data } = await api.post('/auth/client/login', { username: u, password });
       const acc = data.host;
       setClientToken(data.token);
       sessionStorage.setItem('botho_client_user', JSON.stringify(acc));
-      toast.success(`Welcome, ${acc.name.split(' ')[0]}`);
+      toast.success(t('Welcome, {name}', { name: acc.name.split(' ')[0] }));
       onSuccess(acc);
     } catch (err) {
       const msg =
         err.response?.data?.error ||
-        (err.request && !err.response ? 'Cannot reach the server. Check your connection.' : 'Incorrect username or password.');
+        (err.request && !err.response ? t('Cannot reach the server. Check your connection.') : t('Incorrect username or password.'));
       setError(msg);
-      if (err.response?.status === 403) {
-        toast.error(msg || 'This account has been disabled. Contact your administrator.');
-      } else {
-        toast.error(msg);
-      }
+      toast.error(err.response?.status === 403 ? msg || t('This account has been disabled. Contact your administrator.') : msg);
     } finally {
       setLoading(false);
     }
@@ -66,12 +63,15 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
 
   return (
     <div id="loginScreen" className={on ? 'on' : ''} aria-hidden={!on}>
-      <ScreenLoader show={loading} label="Signing in…" />
+      <ScreenLoader show={loading} label={t('Signing in…')} />
       <div className="auth-orb auth-orb-a" />
       <div className="auth-orb auth-orb-b" />
-      <button className="auth-back" onClick={onClose} type="button">
-        <ArrowLeft size={16} strokeWidth={2.2} /> Back to site
-      </button>
+      <div className="auth-topbar">
+        <button className="auth-back" onClick={onClose} type="button">
+          <ArrowLeft size={16} strokeWidth={2.2} /> {t('Back to site')}
+        </button>
+        <LanguageSwitch className="lang-switch-dark" />
+      </div>
       <div className="auth-shell">
         <aside className="auth-brand teal">
           <div className="auth-brand-top">
@@ -79,19 +79,19 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
             <span>Botho Innovations</span>
           </div>
           <h2>
-            Host visitors
-            <em> without the lobby chaos.</em>
+            {t('Visitor management,')}
+            <em> {t('without the paperwork.')}</em>
           </h2>
-          <p>Approve requests, share QR passes, and keep a clean history of everyone who came to see you.</p>
+          <p>{t('Review WhatsApp visit requests, issue QR passes, and keep a clean record of everyone who visits.')}</p>
           <ul className="auth-points">
             <li>
-              <Building2 size={18} strokeWidth={2} /> Your department only
+              <ClipboardList size={18} strokeWidth={2} /> {t('Every company visit request in one place')}
             </li>
             <li>
-              <QrCode size={18} strokeWidth={2} /> Instant visitor passes
+              <QrCode size={18} strokeWidth={2} /> {t('Instant QR passes on WhatsApp')}
             </li>
             <li>
-              <ShieldCheck size={18} strokeWidth={2} /> Secure, auditable decisions
+              <ShieldCheck size={18} strokeWidth={2} /> {t('Secure, auditable decisions')}
             </li>
           </ul>
         </aside>
@@ -99,19 +99,19 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
           <form className="auth-card" onSubmit={doClientLogin}>
             <div className="auth-card-head">
               <span className="auth-chip teal">
-                <Sparkles size={14} strokeWidth={2.2} /> Host portal
+                <Sparkles size={14} strokeWidth={2.2} /> {t('Client Portal')}
               </span>
-              <h1>Sign in</h1>
-              <p>Accounts are issued by your administrator.</p>
+              <h1>{t('Sign in')}</h1>
+              <p>{t('Accounts are issued by your administrator.')}</p>
             </div>
             <label className="auth-field">
-              <span>Username</span>
+              <span>{t('Username')}</span>
               <div className="auth-input">
                 <User size={18} strokeWidth={1.9} />
                 <input
                   ref={userRef}
                   type="text"
-                  placeholder="Enter username"
+                  placeholder={t('Enter username')}
                   autoComplete="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -119,32 +119,37 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
               </div>
             </label>
             <label className="auth-field">
-              <span>Password</span>
+              <span>{t('Password')}</span>
               <div className="auth-input">
                 <Lock size={18} strokeWidth={1.9} />
                 <input
                   type={showPass ? 'text' : 'password'}
-                  placeholder="Enter password"
+                  placeholder={t('Enter password')}
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
-                <button type="button" className="auth-eye" onClick={() => setShowPass((v) => !v)} aria-label={showPass ? 'Hide password' : 'Show password'}>
+                <button
+                  type="button"
+                  className="auth-eye"
+                  onClick={() => setShowPass((v) => !v)}
+                  aria-label={showPass ? t('Hide password') : t('Show password')}
+                >
                   {showPass ? <EyeOff size={18} strokeWidth={1.9} /> : <Eye size={18} strokeWidth={1.9} />}
                 </button>
               </div>
             </label>
             <button className="auth-btn teal" type="submit" disabled={loading}>
               {loading ? <Loader2 size={18} className="spin" /> : <ShieldCheck size={18} strokeWidth={2.2} />}
-              {loading ? 'Signing in…' : 'Sign in'}
+              {loading ? t('Signing in…') : t('Sign in')}
             </button>
             {error ? <p className="auth-error">{error}</p> : null}
             <div className="auth-demo">
-              <b>Test login</b>
+              <b>{t('Test login')}</b>
               <p>
-                Username: <code>boikarabelo</code>
+                {t('Username')}: <code>boikarabelo</code>
                 <br />
-                Password: <code>host2026</code>
+                {t('Password')}: <code>host2026</code>
               </p>
               <button
                 type="button"
@@ -155,10 +160,10 @@ export default function LoginScreen({ on, onClose, onSuccess }) {
                   setError('');
                 }}
               >
-                Fill test credentials
+                {t('Fill test credentials')}
               </button>
             </div>
-            <p className="auth-foot">Need access? Ask your administrator to create a host account.</p>
+            <p className="auth-foot">{t('Need access? Ask your administrator to create an account.')}</p>
           </form>
         </div>
       </div>
