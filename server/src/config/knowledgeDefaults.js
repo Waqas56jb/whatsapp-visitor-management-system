@@ -1,6 +1,9 @@
+export const FIRST_TIME_WELCOME =
+  'Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).';
+
 export const KNOWLEDGE_DEFAULTS = {
-  greeting: 'Welcome! I can help you book a visit. What is your full name?',
-  instruction: 'Always ask for company name. Office hours are 8am–5pm.',
+  greeting: FIRST_TIME_WELCOME,
+  instruction: 'Always ask who they are visiting (host name or department). Notify only that saved host. Always ask for company name. Office hours are 8am–5pm.',
   faqs: [
     {
       question: 'Where is the office?',

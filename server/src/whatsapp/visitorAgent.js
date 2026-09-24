@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
-import { KNOWLEDGE_DEFAULTS } from '../config/knowledgeDefaults.js';
+import { FIRST_TIME_WELCOME, KNOWLEDGE_DEFAULTS } from '../config/knowledgeDefaults.js';
 import { ConversationState, Knowledge, Settings, Visit } from '../models/index.js';
 import { formatDateNice } from '../utils/mappers.js';
+import { listActiveHosts, resolveHostForNotify } from '../services/hosts.js';
 import { createPendingVisit } from '../services/visits.js';
 import { sendText } from './sendMessage.js';
 import { handleIncomingMessage } from './conversationEngine.js';
@@ -10,8 +11,22 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'lookup_host',
+      description: 'Find a company host by name or department from the saved host directory. Use this before booking. Never invent a host.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Host name or department, e.g. Boikarabelo or Technology Planning' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'book_visit',
-      description: 'Create a pending visit booking for this host after the visitor has given name, date, time and purpose.',
+      description: 'Create a pending visit after the visitor has given their details AND a matched host from lookup_host.',
       parameters: {
         type: 'object',
         properties: {
@@ -20,9 +35,11 @@ const TOOLS = [
           purpose: { type: 'string' },
           date: { type: 'string', description: 'YYYY-MM-DD' },
           time: { type: 'string' },
+          hostName: { type: 'string', description: 'Host name or department from the company directory' },
+          hostId: { type: 'number', description: 'Host id returned by lookup_host' },
           visitType: { type: 'string', enum: ['official', 'social'] },
         },
-        required: ['name', 'purpose', 'date', 'time'],
+        required: ['name', 'purpose', 'date', 'time', 'hostName'],
       },
     },
   },
@@ -46,7 +63,8 @@ function sendOpts(ctx) {
 
 async function buildKnowledgePrompt(accountId) {
   const rows = accountId ? await Knowledge.list(accountId) : [];
-  const greeting = rows.find((r) => r.kind === 'greeting')?.answer || KNOWLEDGE_DEFAULTS.greeting;
+  const savedGreeting = String(rows.find((r) => r.kind === 'greeting')?.answer || '').trim();
+  const greeting = savedGreeting || KNOWLEDGE_DEFAULTS.greeting;
   const instruction =
     rows.filter((r) => r.kind === 'instruction').map((r) => r.answer).join('\n') || KNOWLEDGE_DEFAULTS.instruction;
   const savedQa = rows.filter((r) => r.kind === 'qa' && (r.question || r.answer));
@@ -60,12 +78,30 @@ async function buildKnowledgePrompt(accountId) {
 }
 
 async function runTool(name, args, ctx) {
+  if (name === 'lookup_host') {
+    const resolved = await resolveHostForNotify(args.query);
+    if (resolved.host) return { ok: true, host: resolved.host };
+    const directory = await listActiveHosts();
+    return {
+      error: resolved.error,
+      matches: resolved.matches || [],
+      directory: directory.slice(0, 12),
+    };
+  }
   if (name === 'book_visit') {
-    if (!ctx.hostId) return { error: 'This WhatsApp is not linked to a host account.' };
+    const resolved = args.hostId
+      ? { host: { id: args.hostId } }
+      : await resolveHostForNotify(args.hostName);
+    if (!resolved.host) {
+      return {
+        error: resolved.error || 'Ask who they are visiting. Use lookup_host first.',
+        matches: resolved.matches || [],
+      };
+    }
     const visit = await createPendingVisit({
       name: args.name,
       company: args.company || '—',
-      hostId: ctx.hostId,
+      hostId: resolved.host.id,
       purpose: args.purpose,
       date: args.date,
       time: args.time,
@@ -79,13 +115,13 @@ async function runTool(name, args, ctx) {
       ok: true,
       ref: visit.ref_number,
       status: visit.status,
-      note: 'Booking is pending host approval. The host has been notified on WhatsApp.',
+      host: visit.host_name,
+      note: `${visit.host_name} has been notified on their saved WhatsApp number.`,
     };
   }
   if (name === 'check_status') {
     const visit = await Visit.findByRef(args.ref);
     if (!visit) return { error: 'Visit not found' };
-    if (ctx.hostId && Number(visit.host_id) !== Number(ctx.hostId)) return { error: 'Visit not found' };
     return {
       ref: visit.ref_number,
       visitor: visit.visitor_name,
@@ -109,18 +145,35 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
   const kb = await buildKnowledgePrompt(accountId);
   const prior = await ConversationState.findByPhone(from, accountId);
   const history = Array.isArray(prior?.collected_data?.history) ? prior.collected_data.history : [];
+  if (!history.length) {
+    const welcome = FIRST_TIME_WELCOME;
+    await ConversationState.upsert(
+      from,
+      'ai',
+      {
+        history: [
+          { role: 'user', content: String(text || '').trim() || 'hello' },
+          { role: 'assistant', content: welcome },
+        ],
+      },
+      accountId
+    );
+    await sendText(from, welcome, sendOpts(inbound));
+    return;
+  }
   const messages = [
     {
       role: 'system',
       content: [
         `You are the WhatsApp booking assistant for ${kb.org}.`,
-        inbound.hostName
-          ? `You speak for host account "${inbound.hostName}". Bookings always go to this host — do not ask who they are visiting.`
-          : 'Help the visitor book a visit with the linked host.',
-        'Collect: full name, company (if official), purpose, date (YYYY-MM-DD), time, and social vs official.',
-        'When you have enough, call book_visit. Then tell the visitor their reference and that the host will approve.',
-        'Answer FAQs from the knowledge base. Use the greeting on the first turn.',
-        kb.greeting ? `Greeting to use:\n${kb.greeting}` : '',
+        'Always ask who they are visiting — host name or department. That saved host is the person who gets the WhatsApp notify.',
+        'Match hosts only with lookup_host against the company directory. Never invent a name, department, or phone.',
+        'If several hosts match a department, list those names and ask the visitor to pick one. Do not pick randomly.',
+        'Collect: visitor name, company, purpose, date (YYYY-MM-DD), time, and the host to notify.',
+        'Do not call book_visit until lookup_host has matched one host. Then tell the visitor their reference and that this host will approve.',
+        'Answer FAQs from the knowledge base.',
+        `On the visitor's first message, reply with this exact welcome and nothing else:\n${FIRST_TIME_WELCOME}`,
+        kb.greeting && kb.greeting !== FIRST_TIME_WELCOME ? `Custom greeting if already used:\n${kb.greeting}` : '',
         kb.instruction ? `Extra instructions:\n${kb.instruction}` : '',
         kb.qa ? `Knowledge base:\n${kb.qa}` : '',
         'Keep replies short. Same language as the visitor. Approved visitors get a QR pass and a backup PIN.',

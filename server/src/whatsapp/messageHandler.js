@@ -107,7 +107,7 @@ export function attachMessageHandler(sock, ctx = {}) {
           }
         } catch (err) {
           console.error('Visitor reply failed:', err.message);
-          await sendText(visitorId, 'Hi, I can help you book a visit. Please send your full name to get started.', {
+          await sendText(visitorId, 'Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).', {
             accountId: visitorCtx.accountId,
             replyJid: chatJid,
           });

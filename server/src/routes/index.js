@@ -48,6 +48,8 @@ import {
   hostWhatsAppStatus,
 } from '../controllers/hostWhatsAppController.js';
 import {
+  createCompanyHost,
+  deleteCompanyHost,
   hostApprove,
   hostDashboard,
   hostHistory,
@@ -56,6 +58,8 @@ import {
   hostProfile,
   hostReject,
   hostVisits,
+  listCompanyHosts,
+  updateCompanyHost,
 } from '../controllers/hostController.js';
 import { rateLimit, requireAuth } from '../middleware/auth.js';
 import { lookupPassEndpoint, validatePassEndpoint } from '../controllers/passController.js';
@@ -112,6 +116,10 @@ router.get('/host/passes', requireAuth('host'), hostPasses);
 router.get('/host/history', requireAuth('host'), hostHistory);
 router.get('/host/notifications', requireAuth('host'), hostNotifications);
 router.get('/host/profile', requireAuth('host'), hostProfile);
+router.get('/host/staff', requireAuth('host'), listCompanyHosts);
+router.post('/host/staff', requireAuth('host'), createCompanyHost);
+router.patch('/host/staff/:id', requireAuth('host'), updateCompanyHost);
+router.delete('/host/staff/:id', requireAuth('host'), deleteCompanyHost);
 router.get('/host/conversations', requireAuth('host'), listHostConversations);
 router.post('/host/agent', requireAuth('host'), rateLimit({ max: 40 }), hostAgentChat);
 router.get('/host/whatsapp/status', requireAuth('host'), hostWhatsAppStatus);

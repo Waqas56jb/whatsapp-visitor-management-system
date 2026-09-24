@@ -19,11 +19,13 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  UserCheck,
   Users,
   X,
 } from 'lucide-react';
 import Agent from './Agent';
 import Conversations from './Conversations';
+import HostDirectory from './HostDirectory';
 import KnowledgeBase from './KnowledgeBase';
 import ScreenLoader from './ScreenLoader';
 import WhatsAppLink from './WhatsAppLink';
@@ -35,7 +37,8 @@ const titles = {
   requests: ['Visit requests', 'Approve or reject bookings sent to you'],
   conversations: ['Conversations', 'WhatsApp threads for your visitors'],
   agent: ['AI Agent', 'Dashboard assistant — approve or review visits'],
-  whatsapp: ['WhatsApp', 'Scan to link your number for visitor bookings'],
+  whatsapp: ['Please scan company number', 'One company WhatsApp shared by every client account'],
+  hosts: ['Company hosts', 'Manually save host name, WhatsApp, and department'],
   knowledge: ['Knowledge base', 'Train greeting and Q&A for the visitor agent'],
   passes: ['My passes', 'Active QR passes for your approved visitors'],
   history: ['History', 'Everyone who has visited you'],
@@ -198,6 +201,12 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                 <QrCode size={18} strokeWidth={1.85} />
               </span>
               WhatsApp
+            </button>
+            <button className={'ap-link' + (view === 'hosts' ? ' active' : '')} onClick={() => switchView('hosts')}>
+              <span className="ic">
+                <UserCheck size={18} strokeWidth={1.85} />
+              </span>
+              Hosts
             </button>
             <button className={'ap-link' + (view === 'knowledge' ? ' active' : '')} onClick={() => switchView('knowledge')}>
               <span className="ic">
@@ -429,6 +438,10 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
 
             <section className={'ap-view' + (view === 'whatsapp' ? ' active' : '')} id="view-whatsapp">
               {view === 'whatsapp' ? <WhatsAppLink onToast={onToast} /> : null}
+            </section>
+
+            <section className={'ap-view' + (view === 'hosts' ? ' active' : '')} id="view-hosts">
+              {view === 'hosts' ? <HostDirectory onToast={onToast} /> : null}
             </section>
 
             <section className={'ap-view' + (view === 'knowledge' ? ' active' : '')} id="view-knowledge">

@@ -1,6 +1,7 @@
 import { Audit, Host, Visit } from '../models/index.js';
 import { generateQrImage } from '../utils/generateToken.js';
-import { mapAudit, mapVisit } from '../utils/mappers.js';
+import { mapAudit, mapHost, mapVisit } from '../utils/mappers.js';
+import { normalizePhone } from '../utils/phone.js';
 
 function hostIdFrom(req) {
   return req.user?.hostId;
@@ -75,4 +76,55 @@ export async function hostReject(req, res) {
   req.user.role = 'host';
   const { rejectVisit } = await import('./adminController.js');
   return rejectVisit(req, res);
+}
+
+export async function listCompanyHosts(req, res) {
+  const rows = await Host.list();
+  res.json(rows.map(mapHost));
+}
+
+export async function createCompanyHost(req, res) {
+  const name = String(req.body.name || '').trim();
+  const department = String(req.body.department || req.body.dept || '').trim();
+  const phone = normalizePhone(req.body.phone);
+  if (!name || !department || !phone) {
+    return res.status(400).json({ error: 'Add host name, department, and WhatsApp number' });
+  }
+  const host = await Host.create({ name, department, phone });
+  await Audit.add({
+    actor: req.user?.name || req.user?.username || 'Host',
+    action: 'Added host',
+    details: `${name} (${department}) ${phone}`,
+  });
+  res.status(201).json(mapHost(host));
+}
+
+export async function updateCompanyHost(req, res) {
+  const existing = await Host.findById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Host not found' });
+  const fields = {};
+  if (req.body.name !== undefined) fields.name = String(req.body.name || '').trim();
+  if (req.body.department !== undefined || req.body.dept !== undefined) {
+    fields.department = String(req.body.department || req.body.dept || '').trim();
+  }
+  if (req.body.phone !== undefined) fields.phone = normalizePhone(req.body.phone);
+  if (req.body.status !== undefined) fields.status = req.body.status;
+  if (fields.phone !== undefined && !fields.phone) {
+    return res.status(400).json({ error: 'Enter a valid WhatsApp number' });
+  }
+  if (fields.name !== undefined && !fields.name) return res.status(400).json({ error: 'Name is required' });
+  const host = await Host.update(req.params.id, fields);
+  res.json(mapHost(host));
+}
+
+export async function deleteCompanyHost(req, res) {
+  const existing = await Host.findById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Host not found' });
+  await Host.remove(req.params.id);
+  await Audit.add({
+    actor: req.user?.name || req.user?.username || 'Host',
+    action: 'Deleted host',
+    details: `${existing.name} · ${existing.department} · ${existing.phone}`,
+  });
+  res.json({ ok: true });
 }

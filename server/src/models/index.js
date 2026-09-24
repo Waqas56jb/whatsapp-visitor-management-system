@@ -47,6 +47,26 @@ export const Host = {
        ORDER BY name ASC LIMIT 1`,
       [`%${name}%`]
     ),
+  search: (term) =>
+    query(
+      `SELECT * FROM ${T.hosts}
+       WHERE status = 'active'
+         AND (
+           LOWER(name) LIKE LOWER($1)
+           OR LOWER(COALESCE(department, '')) LIKE LOWER($1)
+         )
+       ORDER BY name ASC
+       LIMIT 8`,
+      [`%${term}%`]
+    ),
+  searchByDepartment: (department) =>
+    query(
+      `SELECT * FROM ${T.hosts}
+       WHERE status = 'active' AND LOWER(COALESCE(department, '')) LIKE LOWER($1)
+       ORDER BY name ASC
+       LIMIT 8`,
+      [`%${department}%`]
+    ),
   findByPhone: (phone) =>
     queryOne(
       `SELECT * FROM ${T.hosts} WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $1`,

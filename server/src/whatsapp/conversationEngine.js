@@ -1,13 +1,10 @@
-import { ConversationState, Host, Settings, Visit } from '../models/index.js';
+import { FIRST_TIME_WELCOME } from '../config/knowledgeDefaults.js';
+import { ConversationState, Host, Visit } from '../models/index.js';
 import { formatDateNice } from '../utils/mappers.js';
 import { parseFlexibleDate, parseFlexibleTime } from '../utils/dateParse.js';
+import { matchHosts } from '../services/hosts.js';
 import { createPendingVisit } from '../services/visits.js';
 import { sendText } from './sendMessage.js';
-
-async function orgName() {
-  const settings = await Settings.get().catch(() => null);
-  return settings?.org_name || 'Botho Innovations';
-}
 
 function dataOf(state) {
   const raw = state?.collected_data;
@@ -29,14 +26,7 @@ async function sorry(phone, data, extra, accountId = 0, replyJid = null) {
 }
 
 export async function menuPrompt() {
-  const org = await orgName();
-  return [
-    `Welcome to ${org} Visitor Management.`,
-    '1. Request a visit',
-    '2. Check visit status',
-    '3. Help',
-    'Reply with a number.',
-  ].join('\n');
+  return FIRST_TIME_WELCOME;
 }
 
 export async function showMenu(phone, accountId = 0, replyJid = null) {
@@ -82,11 +72,6 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
   }
 
   async function goPurpose(next) {
-    if (hostId) {
-      const host = await Host.findById(hostId);
-      await ask(from, 'purpose', { ...next, hostId, hostName: host?.name }, 'What is the purpose of your visit?', acct, r);
-      return;
-    }
     const { prompt, hosts } = await hostPrompt();
     await ask(from, 'host', { ...next, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, prompt, acct, r);
   }
@@ -114,6 +99,10 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
         opts(acct, r)
       );
       await showMenu(from, acct, r);
+      return;
+    }
+    if (body.length >= 2) {
+      await ask(from, 'company', { visitType: 'official', name: body }, 'Please reply with your company name.', acct, r);
       return;
     }
     await sorry(from, data, null, acct, r);
@@ -162,10 +151,26 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
       const option = data.hostOptions[Number(body) - 1];
       if (option) host = await Host.findById(option.id);
     }
-    if (!host) host = (await Host.findByName(body)) || (await Host.searchByName(body));
+    const matches = host ? [host] : await matchHosts(body);
+    if (matches.length > 1) {
+      const lines = ['Several hosts match. Reply with the number of the person to notify:'];
+      matches.forEach((h, i) => {
+        lines.push(`${i + 1}. ${h.name}${h.department ? ` (${h.department})` : ''}`);
+      });
+      await ask(
+        from,
+        'host',
+        { ...data, hostOptions: matches.map((h) => ({ id: h.id, name: h.name })) },
+        lines.join('\n'),
+        acct,
+        r
+      );
+      return;
+    }
+    host = matches[0] || null;
     if (!host) {
       const { prompt, hosts } = await hostPrompt();
-      await ask(from, 'host', { ...data, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, `Sorry, I didn't understand that.\n${prompt}`, acct, r);
+      await ask(from, 'host', { ...data, hostOptions: hosts.map((h) => ({ id: h.id, name: h.name })) }, `Sorry, I didn't find that host.\n${prompt}`, acct, r);
       return;
     }
     await ask(from, 'purpose', { ...data, hostId: host.id, hostName: host.name }, 'What is the purpose of your visit?', acct, r);

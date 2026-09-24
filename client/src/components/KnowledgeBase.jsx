@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { BookOpen, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import api from '../api/client';
 
-const DEFAULT_GREETING = 'Welcome! I can help you book a visit. What is your full name?';
-const DEFAULT_INSTRUCTION = 'Always ask for company name. Office hours are 8am–5pm.';
+const DEFAULT_GREETING =
+  'Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).';
+const DEFAULT_INSTRUCTION =
+  'Always ask who they are visiting (host name or department). Notify only that saved host. Always ask for company name. Office hours are 8am–5pm.';
 const DEFAULT_FAQS = [
   {
     question: 'Where is the office?',

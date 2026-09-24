@@ -52,11 +52,8 @@ export function getSock(key = 'admin') {
   return sessions.get(key)?.sock || null;
 }
 
-export function getSockForAccount(accountId) {
-  if (!accountId) return getSock('admin');
-  const session = sessions.get(clientSessionKey(accountId));
-  if (session?.sock) return session.sock;
-  return null;
+export function getSockForAccount() {
+  return getSock('admin');
 }
 
 export function getQrFilePath() {
@@ -83,7 +80,21 @@ export function getWhatsAppStatus() {
 }
 
 export function getClientWhatsAppStatus(accountId, includeQr = false) {
-  return publicStatus(sessions.get(clientSessionKey(accountId)), includeQr);
+  return getCompanyWhatsAppStatus(includeQr);
+}
+
+export function getCompanyWhatsAppStatus(includeQr = false) {
+  const status = publicStatus(sessions.get('admin'), includeQr);
+  if (status.connected) {
+    status.qrDataUrl = null;
+    status.qrAvailable = false;
+    status.connecting = false;
+  }
+  return {
+    ...status,
+    shared: true,
+    scope: 'company',
+  };
 }
 
 async function persistLink(session, extras = {}) {
@@ -218,6 +229,31 @@ export async function startSession(key, options = {}) {
 
 export async function startWhatsApp(options = {}) {
   return startSession('admin', { listenMessages: options.listenMessages !== false });
+}
+
+export async function startCompanyWhatsApp() {
+  const current = getCompanyWhatsAppStatus(true);
+  if (current.connected || current.connecting) return current;
+  await startWhatsApp({ listenMessages: true });
+  return getCompanyWhatsAppStatus(true);
+}
+
+export async function stopCompanyWhatsApp() {
+  const session = sessions.get('admin');
+  if (session?.sock) {
+    try {
+      await session.sock.logout();
+    } catch {
+      try {
+        session.sock.end();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  if (session) session.generation = (session.generation || 0) + 1;
+  sessions.delete('admin');
+  return getCompanyWhatsAppStatus(false);
 }
 
 export async function startClientWhatsApp(accountId, hostId) {
