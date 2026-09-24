@@ -1,0 +1,454 @@
+CHAT GPT TASK
+=============
+You are a senior WhatsApp bot architect and prompt engineer.
+
+I am building a live production system. I use the OpenAI API (default model: gpt-4o-mini). I do NOT pass ChatGPT a long rolling memory of the whole visitor life. Each WhatsApp turn is handled by MY backend. The backend stores structured booking SLOTS (name, company, purpose, host, date, time) plus the last 20 messages in our own database. The LLM, when it is called, often sees only the latest user line plus a system prompt. It does NOT automatically remember "I already asked company" unless WE put that in the prompt or, better, we never let the LLM collect fields at all.
+
+I need TWO things from you at the end:
+
+1) Your honest recommendation
+   - Which OpenAI model should I use for this visitor receptionist (quality vs cost vs latency on WhatsApp)?
+   - Should the LLM collect booking fields, or should a deterministic slot engine collect fields and the LLM only answer FAQs?
+   - How should "memory" work if I am not using the ChatGPT app memory / Assistants threads?
+   - What temperature, max_tokens, and tool policy do you recommend?
+   - What must NEVER be left to the model (hosts, dates already collected, visitor identity)?
+
+2) Give me the actual production artifacts I can paste into code
+   - SYSTEM_PROMPT (English + Setswana rules)
+   - DEVELOPER / ENGINE RULES (slot machine, never overwrite filled slots)
+   - FEW-SHOT examples (good and bad)
+   - A turn template showing exactly what I should send the model each time
+   - A Setswana + English welcome text that is official, not "How can I assist you today?"
+
+Do not write a generic chatbot. Do not invent Botho staff, departments, prices, or hosts. Do not tell me to use LangChain unless you explain why the current Node backend is not enough.
+
+If anything below conflicts, follow the CLIENT RULES and the BAD TRANSCRIPT. Those are real production failures.
+
+
+==================================================
+1. WHAT THIS PROJECT IS
+==================================================
+
+Product name: Botho Innovations Visitor Management System
+Country: Botswana
+Official languages ONLY: English and Setswana
+Default UI language: English, with a Setswana switch on Client Portal and Admin Panel
+Channel: ONE company WhatsApp number (Baileys / WhatsApp Web QR), not Meta Cloud API, not one QR per host
+
+Stack:
+- Node.js + Express + PostgreSQL
+- React Client Portal (company staff)
+- React Admin Panel
+- WhatsApp session: one company QR scanned in the Client Portal
+- Hosts: a manual directory (name, department, personal WhatsApp number)
+- Visits: pending → approved / rejected
+- After approve: visitor gets WhatsApp text + QR pass
+- Host WhatsApp approve-by-reply is NOT in scope until project lock
+- Host is only notified on WhatsApp and told to open Client Portal → Visit requests
+
+Actors:
+1) VISITOR — writes to the company WhatsApp to book a visit
+2) HOST — a real person saved in the Hosts list; they receive a notify and decide in the portal
+3) CLIENT / STAFF — Client Portal: hosts, knowledge, WhatsApp QR, approve/reject, notifications
+4) ADMIN — Admin Panel: accounts, settings, oversight
+
+
+==================================================
+2. HOW THE CLIENT WANTS THE WHOLE SYSTEM TO WORK
+==================================================
+
+END-TO-END HAPPY PATH
+
+1. Reception / security or a guest opens WhatsApp and messages the COMPANY number.
+2. First greeting (Hi / Hello / Dumela) gets ONE official welcome. Never a generic sales greeting.
+
+   English:
+   "Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time)."
+
+   Setswana: a natural equivalent of the SAME meaning. Not broken word-by-word translation.
+
+3. The visitor may send ALL details in one message OR one field at a time. Both must complete the booking.
+
+   Required fields, in this order if missing:
+   - Full name
+   - Company
+   - Purpose
+   - Host name OR department (MUST match the saved Hosts directory)
+   - Visit date
+   - Visit time
+
+4. When everything is present, show a short confirmation and ask YES.
+5. On YES, create a pending visit with reference VMS-YYYY-######.
+6. Company WhatsApp sends the HOST's PERSONAL WhatsApp a notify:
+   visitor, company, purpose, date, time, reference
+   PLUS: "Please approve or reject this in the Client Portal → Visit requests."
+   DO NOT say: Reply YES / APPROVE / REJECT.
+7. Staff see the request on the Client Portal (bell + sound). They Approve or Reject.
+8. Visitor is messaged the result. Approved = details + QR. Rejected = declined message.
+
+RULES THE CLIENT IS STRICT ABOUT
+- AI must never invent a host. Only the Hosts table is truth.
+- A visitor and a host may share the same name (e.g. Waqas visiting Waqas). That is valid. Do not assume they are booking themselves just because the name exists in the directory.
+- "Waqas Naveed from Astra" at the start of a sentence is the VISITOR, not automatically the HOST.
+- "visit on 25 September" is a DATE, not a host named Visit or Date.
+- Do not reuse an old booking's company / purpose / time on a new chat.
+- Hi or "another booking" / "new booking" resets slots.
+- Never ask again for a field already stored.
+- Never say "How can I assist you today?"
+- No markdown, no asterisk bullets, no emoji spam unless the visitor used them.
+- No programming / homework answers. Reception only.
+- Dates: 25 September, 25 Sep, 2026-09-25, tomorrow — all valid. Do not demand YYYY-MM-DD only.
+- Times: 3 pm, 15:00, 3:00 PM — all valid.
+- Languages: English and Setswana only. Reply in the language of the latest visitor message.
+- Host WhatsApp approve is locked for later. Portal approve is the only decision path now.
+
+
+==================================================
+3. HOW THE AI / MODEL IS ACTUALLY WIRED TODAY
+==================================================
+
+IMPORTANT — READ THIS BEFORE YOU RECOMMEND ANYTHING
+
+I am NOT using ChatGPT Memory, not using the ChatGPT app, not using Assistants persistent threads as the booking brain.
+
+What I use:
+- OpenAI Chat Completions
+- Model env: OPENAI_MODEL, currently gpt-4o-mini
+- Temperature has been 0 when the model is used
+- Backend Node code extracts slots with regex / parsers
+- ConversationState in Postgres stores slots + last ~20 messages
+- Hosts are loaded from the database every turn
+
+So when people say "the AI has no memory", this is what they mean:
+The MODEL does not remember the previous WhatsApp turn by itself.
+If my code fails to persist slots, or my extractor fails, or I send the model a prompt that looks like a first message, the model starts over: welcome again, ask name again, treat "pakistan" as a greeting, treat "date is" as a host.
+
+YOUR JOB is to design the prompt AND the turn contract so this cannot happen even if the model is small and cheap.
+
+Recommended architecture I want you to confirm or improve:
+
+A) DETERMINISTIC SLOT ENGINE (must own the booking)
+   - Parse name, company, purpose, host/department, date, time from the raw WhatsApp text
+   - Merge into slots: never overwrite a filled slot with empty or guessed data
+   - Ask ONLY the next missing field
+   - Host match: full name, first name, last name, department (Procurement, Finance, HR, Food Services, AI/ML, Technology Planning, etc.)
+   - 1 match → save host
+   - many matches → numbered list, wait for 1 / 2 / 3
+   - 0 matches → say so ONCE and show the real host list. Do not repeat the same sentence.
+
+B) LLM (optional, FAQ only)
+   - Office hours, address, "where do I park", knowledge-base questions
+   - Visit status if they send VMS-2026-xxxxxx
+   - Refuse off-topic
+   - MUST receive in every call:
+     * official welcome text
+     * collected slots so far (the only source of truth)
+     * next missing field
+     * saved host list
+     * last 8–20 messages
+     * language
+     * "NEVER ask for a field that is already filled"
+     * "NEVER output the welcome again unless greeting-only AND slots empty"
+     * "NEVER invent a host"
+
+If you believe gpt-4o-mini is the wrong model for receptionist work, say so and why. If you believe I should not call the LLM at all during field collection, say that clearly. That is probably the correct answer.
+
+
+==================================================
+4. REAL PRODUCTION FAILURE — STUDY THIS
+==================================================
+
+This is an actual visitor chat. This quality is unacceptable. Design your prompt and engine so this exact path cannot happen.
+
+Visitor: Hi
+Bot: Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).
+        ← CORRECT
+
+Visitor: Im waqas Naveed
+Bot: Which company are you visiting from?
+        ← CORRECT (name saved, ask company)
+
+Visitor: pakistan
+Bot: Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).
+        ← CATASTROPHIC. "pakistan" is the COMPANY. Slots were forgotten or treated as a new greeting. Welcome must NEVER replay if name is already collected.
+
+Visitor: i am waqas naveed
+Bot: Which company are you visiting from?
+        ← It lost the first name too, or reset. Bad memory.
+
+Visitor: i am from devmark
+Bot: May I have your full name?
+        ← WRONG. Company is Devmark. Name was already Waqas Naveed. It asked name AGAIN. "i am from X" is company, not a reset.
+
+Visitor: waqas naveed
+Bot: Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).
+        ← WORST CASE. Full reset after a valid name. Looks like greeted-only logic is firing on any short message, or state is wiped every turn.
+
+Visitor: visit
+Bot: Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).
+        ← "visit" is not a greeting. If slots empty, ask name. If slots have name, ask next missing. NEVER dump welcome again.
+
+Visitor: i am waqas naveed from culinova comapny  pirpose is ai consultant  visit date is 2026 25 september
+Bot: I don't have a host or department called "date is" saved. Please choose one of these by replying with the number:
+     1. ASTRA
+     2. Boikarabelo Ramaretlwa (Technology Planning)
+     3. Botho
+     4. Botho Prince (Technology Planning)
+     5. Hamza (food services)
+     6. Naledi Kgosi (Human Resources)
+     7. Tshepo Molefe (Finance)
+     8. Waqas Naveed (AI/ML Egnineer)
+        ← PARSER BUG. It stole the words "date is" as a HOST query.
+           Correct extract from that one line:
+           name    = Waqas Naveed
+           company = Culinova
+           purpose = AI consultant
+           date    = 2026-09-25
+           time    = still missing
+           host    = still missing
+           Next question should be ONLY: "Who would you like to visit? Reply with the host name, department, or a number from this list:" then the list.
+           It must NOT invent a host named "date is".
+
+OTHER REAL FAILURES FROM EARLIER CHATS (also fix in your design)
+
+1) Loop:
+   Visitor: Sales pitch
+   Bot: Who would you like to visit?
+   Visitor: Procurement
+   Bot: Who would you like to visit?
+   Visitor: Botho
+   Bot: Who would you like to visit?
+   (same question 5 times, no progress)
+
+2) One-message ignored:
+   "Waqas naveed from Astra innovations. I want to consult AI system want yo visit on 25 September at 3 pm"
+   This already has name, company, purpose, date, time. Only host may be missing. Do not ask name again.
+
+3) Hallucination:
+   Visitor says they are Ali Raza visiting Waqas.
+   Bot books Visitor: Waqas Naveed, Host: Waqas Naveed, Company: Astra, Time: 3pm from an OLD booking.
+
+4) Generic bot:
+   "Hello! How can I assist you today?"
+   Forbidden. Official welcome only.
+
+5) Host approve leaked into visitor chat; host personal WhatsApp did not get the notify.
+   Host message must go only to host.phone. Never use the visitor replyJid for host notify.
+
+6) Client said: "Here we only use English and Setswana. AI must be multilingual. Just 2 official languages."
+
+
+==================================================
+5. HOW A PERFECT BOOKING MUST LOOK (TEACH THE MODEL THIS)
+==================================================
+
+EXAMPLE A — one field at a time (English)
+
+Visitor: Hi
+Bot: Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).
+
+Visitor: Im Waqas Naveed
+Bot: Which company are you visiting from?
+
+Visitor: Pakistan
+Bot: What is the purpose of your visit?
+     (Pakistan is company. Do not welcome again.)
+
+Visitor: AI consultant
+Bot: Who would you like to visit? Please share the host name or department.
+     1. ASTRA
+     2. Boikarabelo Ramaretlwa (Technology Planning)
+     3. Botho
+     4. Botho Prince (Technology Planning)
+     5. Hamza (food services)
+     6. Naledi Kgosi (Human Resources)
+     7. Tshepo Molefe (Finance)
+     8. Waqas Naveed (AI/ML Engineer)
+
+Visitor: Hamza
+Bot: Which date would you like to visit?
+
+Visitor: 25 September 2026
+Bot: What time works for you?
+
+Visitor: 3 pm
+Bot: Please confirm these details only:
+     Name: Waqas Naveed
+     Company: Pakistan
+     Purpose: AI consultant
+     Date: 25 September 2026
+     Time: 15:00
+     Host: Hamza (food services)
+     Reply yes to submit, or tell me what to change.
+
+Visitor: Yes
+Bot: Your visit request has been submitted.
+     Visitor: Waqas Naveed
+     Host: Hamza
+     Date: 25 Sept 2026 at 15:00
+     Reference: VMS-2026-xxxxxx
+     Hamza has been notified on WhatsApp. They will approve or reject this from the Client Portal. You will be updated here.
+
+
+EXAMPLE B — everything in one messy message
+
+Visitor: Hi
+Bot: [official welcome]
+
+Visitor: i am waqas naveed from culinova comapny pirpose is ai consultant visit date is 2026 25 september at 3pm i want to see hamza
+Bot: Please confirm these details only:
+     Name: Waqas Naveed
+     Company: Culinova
+     Purpose: AI consultant
+     Date: 25 September 2026
+     Time: 15:00
+     Host: Hamza (food services)
+     Reply yes to submit, or tell me what to change.
+
+Typos the engine MUST survive: comapny, pirpose, yo, Im, wanna, 2026 25 september, 3pm, want yo visit.
+
+
+EXAMPLE C — department, not a person
+
+Visitor: Procurement
+(when host is the missing field)
+Bot: I found Naledi Kgosi (Human Resources).   ← only if that is the real match
+OR if Procurement matches nobody:
+Bot: I do not have a host or department called Procurement. Please choose a number:
+     1. ...
+Never ask "Who would you like to visit?" again with zero new information.
+
+
+EXAMPLE D — Setswana (same slots, same order)
+
+Visitor: Dumela
+Bot: [official Setswana welcome asking name, company, purpose, date, time]
+
+Visitor: Ke nna Waqas Naveed
+Bot: O tswa ko khae? / company question in proper Setswana
+
+Keep asking only the next empty slot. Do not switch to English unless they switch.
+
+
+EXAMPLE E — what the bot must NEVER do
+
+- Replay the welcome after any non-greeting once welcomed or any slot is filled
+- Ask name after name is filled
+- Treat "pakistan", "devmark", "visit", "yes", "3 pm" as Hi
+- Parse "visit date is 2026 25 september" as host query "date is"
+- Book using a previous conversation's Astra / 3pm / Waqas
+- Approve the visit from the visitor chat
+- Invent host "John from IT" if John is not in the directory
+
+
+==================================================
+6. SLOT CONTRACT (SOURCE OF TRUTH — PUT THIS IN THE PROMPT YOU RETURN)
+==================================================
+
+slots = {
+  name,        // string, visitor full name
+  company,     // string
+  purpose,     // string
+  hostName,    // string from directory only
+  hostId,      // number from directory only
+  hostDept,    // string from directory
+  date,        // YYYY-MM-DD
+  time         // HH:mm 24h
+}
+
+merge rule:
+  incoming empty NEVER overwrites existing
+  LLM guess NEVER overwrites existing
+  only visitor text or a numbered host pick may write a slot
+
+ask order:
+  name → company → purpose → host → date → time → confirm → book
+
+greeting-only (hi, hello, hey, dumela, good morning, …) AND no slots:
+  send official welcome ONCE, set welcomed=true
+
+greeting-only AND slots already have data:
+  do not welcome again; remind the next missing field or the confirmation
+
+new booking / another booking / start over:
+  wipe slots, keep language, send official welcome
+
+isConfirm (yes, yebo, ke a dumela, …) AND all slots ready:
+  book, then wipe slots, keep lastRef
+
+host matching:
+  compare against directory names and departments only
+  ignore stopwords: visit, date, is, on, at, purpose, company, from
+  "date is", "visit", "on 25" are NOT hosts
+
+
+==================================================
+7. WHAT TO SEND THE MODEL ON EACH TURN (IF YOU STILL CALL OPENAI)
+==================================================
+
+I want you to write the exact JSON-shaped message list.
+
+Every call MUST include:
+
+system:
+  You are the Botho Innovations WhatsApp receptionist.
+  Languages: English and Setswana only.
+  You do not collect fields that are already in COLLECTED_SLOTS.
+  You do not output the welcome unless the user message is greeting-only AND COLLECTED_SLOTS are all empty.
+  You never invent hosts. Hosts = SAVED_HOSTS only.
+  You never approve visits.
+  Short, calm, no markdown.
+  If NEXT_MISSING is set, your entire reply is the question for that field, or a numbered host list.
+  If NEXT_MISSING is null and awaiting_confirm is true, only show the summary and ask yes.
+  If the user asked a knowledge question, answer from KNOWLEDGE then repeat NEXT_MISSING in one extra line.
+
+developer / user payload each turn:
+  COLLECTED_SLOTS: { ... }
+  NEXT_MISSING: name | company | purpose | host | date | time | null
+  WELCOMED: true|false
+  LANGUAGE: en|tn
+  SAVED_HOSTS: [ {name, department} ]
+  KNOWLEDGE: (FAQs, hours 8am–5pm, reception check-in)
+  LAST_MESSAGES: last 20 {role, content}
+  USER_MESSAGE: raw WhatsApp text
+
+If NEXT_MISSING is not null, THE MODEL SHOULD NOT BE CALLED. My code should ask the field. Confirm this in your recommendation.
+
+
+==================================================
+8. UI / PORTAL (SECONDARY — MENTION ONLY)
+==================================================
+
+Client does not like the current Client and Admin UI. They want market-standard SaaS, English default, Setswana switch.
+Do not spend your answer redesigning CSS. Mention only: every AI string the portal shows for WhatsApp preview must exist in both languages.
+Focus 80% of your answer on the receptionist brain.
+
+
+==================================================
+9. YOUR OUTPUT FORMAT
+==================================================
+
+Reply in this structure:
+
+A. Diagnosis
+   Why the bad transcript happened (memory, greeting detector, host parser, model misuse). Be blunt.
+
+B. Recommendation
+   - Model: keep gpt-4o-mini / upgrade to X / do not use an LLM for collection
+   - Memory: what I must persist (I already have Postgres slots — tell me if that is enough)
+   - Temperature, max_tokens
+   - When to call OpenAI and when to forbid the call
+
+C. Final SYSTEM_PROMPT
+   Ready to paste. Include Setswana rules and anti-hallucination rules.
+
+D. Final FIELD_COLLECTION_SPEC
+   Regex / rules in plain English my Node parser must follow so "visit date is 2026 25 september" never becomes host "date is".
+
+E. Few-shot block
+   At least 8 user→assistant pairs copied from the good examples and the repaired bad transcript.
+
+F. Test checklist
+   Copy the bad transcript and write the EXACT bot replies that should have been sent instead, line by line.
+
+Do not give me a fluffy brand story. Give me something I can ship.

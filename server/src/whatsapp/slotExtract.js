@@ -77,6 +77,8 @@ function prep(raw) {
     .replace(/\b(?:wanna|wana)\b/gi, 'want to')
     .replace(/\bgonna\b/gi, 'going to')
     .replace(/\bim\b/gi, "I'm")
+    .replace(/\b(?:comapny|compnay|copmany|comany|compny|campany)\b/gi, 'company')
+    .replace(/\b(?:pirpose|purpse|purpos|porpose|perpose|purose)\b/gi, 'purpose')
     .replace(/[ \t]+/g, ' ')
     .trim();
 }
@@ -128,13 +130,13 @@ function extractName(text) {
     const name = cleanName(intro[1]);
     if (name) return name;
   }
-  const from = text.match(new RegExp(`^(${NAME_WORD}(?:\\s+${NAME_WORD}){0,3})\\s+(?:from|representing)\\s+\\S`, 'i'));
+  const from = text.match(new RegExp(`^(${NAME_WORD}(?:\\s+${NAME_WORD}){0,3})\\s+(?:from|representing|visiting|here to see|to see)\\s+\\S`, 'i'));
   if (from) return cleanName(from[1]);
   return '';
 }
 
 const COMPANY_STOP =
-  "(?=\\s*(?:$|[.,;!?\\n]|\\s(?:and|i|i'm|we|to|want|wants|would|on|at|for|here|coming|visiting|who|that|mme|ke|go|le|company)\\b|\\s\\d))";
+  "(?=\\s*(?:$|[.,;!?\\n]|\\s(?:and|i|i'm|we|to|want|wants|would|on|at|for|here|coming|visiting|visit|who|that|mme|ke|go|le|company|purpose|reason|date|time|host|my)\\b|\\s\\d))";
 
 function extractCompany(text) {
   const m = text.match(
@@ -146,7 +148,24 @@ function extractCompany(text) {
   if (!m) return '';
   const value = cleanValue(m[1]);
   if (!value || extractTime(value) || extractDate(value) || /^(home|here|there|work)$/i.test(value)) return '';
-  return value;
+  return tidyCase(value);
+}
+
+// "culinova" → "Culinova"; deliberate casing like "MyOrange" or "BPC" is kept.
+function tidyCase(value) {
+  return value === value.toLowerCase() ? value.replace(/\b[a-z]/g, (c) => c.toUpperCase()) : value;
+}
+
+// Field answers that are really booking vocabulary, not a value ("visit", "date", "yes"...).
+const BOOKING_WORDS = new Set([
+  'visit', 'visiting', 'visitor', 'host', 'date', 'time', 'day', 'company', 'name', 'purpose', 'reason', 'department',
+  'booking', 'book', 'appointment', 'details', 'ok', 'okay', 'please', 'help', 'menu', 'hello', 'hi', 'the', 'is',
+  'on', 'at', 'to', 'from', 'see', 'want', 'ketelo', 'letlha', 'nako', 'leina', 'kompone', 'maikaelelo',
+]);
+
+export function isBookingWordsOnly(text) {
+  const words = String(text || '').toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every((w) => BOOKING_WORDS.has(w));
 }
 
 const PURPOSE_TAIL =
@@ -157,7 +176,7 @@ const PURPOSE_NOUNS =
 
 function extractPurpose(text) {
   const explicit = text.match(
-    /\b(?:purpose(?: of (?:my|the) visit)?(?: is|:)?|reason(?: is|:)?|maikaelelo(?: a me)?(?: ke)?)\s+(.+?)(?=$|[.;!?\n])/i
+    /\b(?:purpose(?: of (?:my|the) visit)?(?: is|:)?|reason(?: is|:)?|maikaelelo(?: a me)?(?: ke)?)\s+(.+?)(?=$|[.;!?\n]|\s(?:visit\s+)?(?:date|time|day)\b|\s(?:on|at|ka)\s+\d|\s(?:tomorrow|today|kamoso|gompieno)\b|\s(?:host|visiting|to see|to visit|to meet)\b|\s(?:i\s+)?want to (?:see|visit|meet)\b)/i
   );
   if (explicit) return capitalize(cleanValue(explicit[1], 160));
 
@@ -180,7 +199,7 @@ function extractPurpose(text) {
 }
 
 const HOST_EXCLUDE =
-  '(?!(?:on|at|in|the office|the company|you|your|us|them|him|her|it|tomorrow|today|next|this|a|an|for|to|someone|somebody|reception)\\b)';
+  '(?!(?:on|at|in|the office|the company|you|your|us|them|him|her|it|tomorrow|today|next|this|a|an|for|to|someone|somebody|reception|date|time|day|is|purpose|reason|company|from|details|request|booking)\\b)';
 const HOST_TAIL =
   '(?=\\s*(?:$|[.,;!?\\n]|\\s(?:on|at|for|to|tomorrow|today|from|and|about|regarding|department|dept|office|in|ka|ko|mo|kamoso|gompieno|next|this)\\b|\\s\\d))';
 
@@ -194,7 +213,7 @@ function extractHostQuery(text, orgName = '') {
   const dept = text.match(/\b(?:the\s+)?([A-Za-z][A-Za-z/&-]*(?:\s+[A-Za-z][A-Za-z/&-]*)?)\s+(?:department|dept)\b/i)
     || text.match(/\blefapha la\s+([A-Za-z][A-Za-z/&-]*(?:\s+[A-Za-z][A-Za-z/&-]*)?)/i);
   const raw = cleanValue(verb?.[1] || dept?.[1] || '', 60);
-  if (!raw) return '';
+  if (!raw || isBookingWordsOnly(raw)) return '';
   const org = String(orgName || '').toLowerCase();
   const lower = raw.toLowerCase();
   if (org && (lower === org || org.startsWith(lower) && lower.split(' ').length > 1)) return '';
@@ -264,7 +283,7 @@ export function extractFields(input, { today = todayStamp(), orgName = '', start
 // Interprets a short reply as the answer to the field we just asked for.
 export function answerForField(field, input, { today = todayStamp() } = {}) {
   const raw = stripGreeting(prep(input));
-  if (!raw || isYes(raw) || isNo(raw) || isGreetingOnly(raw) || looksLikeQuestion(raw)) return null;
+  if (!raw || isYes(raw) || isNo(raw) || isGreetingOnly(raw) || looksLikeQuestion(raw) || isBookingWordsOnly(raw)) return null;
   if (field === 'name') {
     const stripped = raw.replace(/^(?:my (?:full )?names? (?:is|are)|i am|i'm|it's|this is|name:?|leina la me ke|maina a me ke|ke nna)\s+/i, '');
     if (!/^[A-Za-z][A-Za-z'.\-\s]{0,60}$/.test(stripped) || stripped.split(/\s+/).length > 5) return null;
@@ -274,7 +293,7 @@ export function answerForField(field, input, { today = todayStamp() } = {}) {
     const stripped = raw.replace(/^(?:i'm from|i am from|from|i work (?:at|for)|company(?: name)?(?: is|:)?|ke tswa kwa|ke tswa ko|kompone ya me ke)\s+/i, '');
     if (/^(none|no company|n\/a|na|personal|private|self|self employed|ga ke na|ga ke na kompone)$/i.test(stripped)) return 'Personal';
     const value = cleanValue(stripped);
-    return value.length >= 2 ? value : null;
+    return value.length >= 2 ? tidyCase(value) : null;
   }
   if (field === 'purpose') {
     const stripped = raw.replace(/^(?:the )?(?:purpose(?: of (?:my|the) visit)?(?: is|:)?|it's for|for|maikaelelo(?: a me)?(?: ke)?)\s+(?:a |an )?/i, '');

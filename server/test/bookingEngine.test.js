@@ -311,6 +311,54 @@ describe('realistic variations', () => {
   });
 });
 
+describe('production transcript from the review', () => {
+  test('re-sent name, company correction, and "visit" never reset or corrupt the booking', () => {
+    const { replies, state } = chat([
+      'Hi',
+      'Im waqas Naveed',
+      'pakistan',
+      'i am waqas naveed',
+      'i am from devmark',
+      'waqas naveed',
+      'visit',
+    ]);
+    assert.equal(replies[1], 'Which company are you visiting from?');
+    assert.equal(replies[2], 'What is the purpose of your visit?');
+    for (const r of replies.slice(2)) {
+      assert.doesNotMatch(r, /^Welcome/);
+      assert.doesNotMatch(r, /host or department called/);
+    }
+    assert.equal(state.slots.name, 'Waqas Naveed');
+    assert.equal(state.slots.company, 'Pakistan');
+    assert.equal(state.slots.purpose, '');
+    assert.match(replies.at(-1), /why you are visiting/);
+  });
+
+  test('typo-heavy one-liner: "visit date is" is a date, never a host', () => {
+    const { state, replies } = chat([
+      'Hi',
+      'i am waqas naveed from culinova comapny pirpose is ai consultant visit date is 2026 25 september',
+    ]);
+    assert.equal(state.slots.name, 'Waqas Naveed');
+    assert.equal(state.slots.company, 'Culinova');
+    assert.equal(state.slots.purpose, 'Ai consultant');
+    assert.equal(state.slots.date, '2026-09-25');
+    assert.equal(state.slots.hostId, null);
+    assert.equal(replies[1], 'Who would you like to visit? Please share the host name or department.');
+  });
+
+  test('"Ali Raza visiting Waqas" keeps visitor and host separate', () => {
+    const { state } = chat(['Ali Raza visiting Waqas']);
+    assert.equal(state.slots.name, 'Ali Raza');
+    assert.equal(state.slots.hostId, 9);
+  });
+
+  test('"visit" as a host answer shows the list, not a "no host called visit" message', () => {
+    const { replies } = chat(['Hi', 'Michael', 'Botho Innovations', 'Meeting', 'visit']);
+    assert.match(replies.at(-1), /^Please choose the host you are visiting/);
+  });
+});
+
 describe('matchers', () => {
   test('host matching', () => {
     assert.deepEqual(matchHosts('Procurement', HOSTS), []);

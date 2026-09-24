@@ -15,7 +15,7 @@ import {
   normalizeLang,
 } from './lang.js';
 import { hostOptionLines, summaryText, t } from './messages.js';
-import { answerForField, emptySlots, extractFields, missingField } from './slotExtract.js';
+import { answerForField, emptySlots, extractFields, isBookingWordsOnly, missingField } from './slotExtract.js';
 
 const STATE_VERSION = 2;
 const MAX_OPTIONS = 20;
@@ -129,6 +129,11 @@ function advance(state) {
   return t(state.lang, 'confirm', { summary: summaryText(state.slots, state.lang) });
 }
 
+function repeatsFilledSlot(slots, value) {
+  const v = String(value || '').trim().toLowerCase();
+  return ['name', 'company', 'purpose', 'hostName'].some((f) => slots[f] && String(slots[f]).trim().toLowerCase() === v);
+}
+
 function filledMap(slots) {
   return {
     name: Boolean(slots.name),
@@ -150,7 +155,8 @@ function handleCollect(state, raw, ctx) {
 
   if (asked && asked !== 'host' && !found[asked] && (!anyFound || (asked !== 'name' && !PATTERNY.test(raw)))) {
     const answer = answerForField(asked, raw, { today: ctx.today });
-    if (answer) found[asked] = answer;
+    // Re-sending an earlier answer (e.g. the name again) is not an answer to the new question.
+    if (answer && !repeatsFilledSlot(state.slots, answer)) found[asked] = answer;
   }
   if (asked === 'host' && !hostQuery && (!anyFound || !PATTERNY.test(raw))) {
     hostQuery = answerForField('host', raw, { today: ctx.today }) || '';
@@ -192,7 +198,10 @@ function handleCollect(state, raw, ctx) {
     const field = missingField(state.slots) || 'name';
     if (asked === field) {
       state.retries += 1;
-      if (field === 'host') return { reply: openHostList(state, ctx.hosts, raw) };
+      if (field === 'host') {
+        const reply = openHostList(state, ctx.hosts, raw);
+        return { reply: isBookingWordsOnly(raw) && state.stage === 'choose_host' ? listPrompt(state, 'host.pick') : reply };
+      }
       return { reply: t(state.lang, `retry.${field}`) };
     }
     state.asked = field;
