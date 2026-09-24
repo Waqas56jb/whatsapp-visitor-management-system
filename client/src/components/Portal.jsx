@@ -39,7 +39,7 @@ const titles = {
   agent: ['AI Agent', 'Dashboard assistant — approve or review visits'],
   whatsapp: ['Please scan company number', 'One company WhatsApp shared by every client account'],
   hosts: ['Company hosts', 'Manually save host name, WhatsApp, and department'],
-  knowledge: ['Knowledge base', 'Train greeting and Q&A for the visitor agent'],
+  knowledge: ['Knowledge base', 'Train the company agent with files, links, and rules'],
   passes: ['My passes', 'Active QR passes for your approved visitors'],
   history: ['History', 'Everyone who has visited you'],
   notifications: ['Notifications', 'Recent updates'],

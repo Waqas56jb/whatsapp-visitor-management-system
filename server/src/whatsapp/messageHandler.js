@@ -107,10 +107,14 @@ export function attachMessageHandler(sock, ctx = {}) {
           }
         } catch (err) {
           console.error('Visitor reply failed:', err.message);
-          await sendText(visitorId, 'Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).', {
-            accountId: visitorCtx.accountId,
-            replyJid: chatJid,
-          });
+          await sendText(
+            visitorId,
+            'I can help you book a visit. Please send your name, company, purpose, date, time, and the host you want to see.',
+            {
+              accountId: visitorCtx.accountId,
+              replyJid: chatJid,
+            }
+          );
         }
       } catch (err) {
         console.error('WhatsApp message handler failed:', err.message);

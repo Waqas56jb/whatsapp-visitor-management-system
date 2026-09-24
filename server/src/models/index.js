@@ -214,14 +214,40 @@ export const Visit = {
     ),
 };
 
+function hydrateConversation(row) {
+  if (!row) return null;
+  let data = row.collected_data;
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      data = {};
+    }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) data = {};
+  return { ...row, collected_data: data };
+}
+
 export const ConversationState = {
-  findByPhone: (phone, accountId = 0) =>
-    queryOne(
+  findByPhone: async (phone, accountId = 0) => {
+    const digits = normalizePhone(phone) || String(phone || '').trim();
+    if (!digits) return null;
+    const exact = await queryOne(
       `SELECT * FROM ${T.conversations} WHERE phone_number = $1 AND account_id = $2`,
-      [normalizePhone(phone), Number(accountId) || 0]
-    ),
-  upsert: (phone, current_step, collected_data = {}, accountId = 0) =>
-    queryOne(
+      [digits, Number(accountId) || 0]
+    );
+    if (exact) return hydrateConversation(exact);
+    const latest = await queryOne(
+      `SELECT * FROM ${T.conversations}
+       WHERE phone_number = $1 OR phone_number = $2
+       ORDER BY updated_at DESC LIMIT 1`,
+      [digits, String(phone || '').trim()]
+    );
+    return hydrateConversation(latest);
+  },
+  upsert: async (phone, current_step, collected_data = {}, accountId = 0) => {
+    const digits = normalizePhone(phone) || String(phone || '').trim();
+    const row = await queryOne(
       `INSERT INTO ${T.conversations} (phone_number, current_step, collected_data, account_id, updated_at)
        VALUES ($1,$2,$3::jsonb,$4, NOW())
        ON CONFLICT (phone_number, account_id) DO UPDATE
@@ -229,20 +255,27 @@ export const ConversationState = {
              collected_data = EXCLUDED.collected_data,
              updated_at = NOW()
        RETURNING *`,
-      [normalizePhone(phone), current_step, JSON.stringify(collected_data || {}), Number(accountId) || 0]
-    ),
+      [digits, current_step, JSON.stringify(collected_data || {}), Number(accountId) || 0]
+    );
+    return hydrateConversation(row);
+  },
   clear: (phone, accountId = 0) =>
     query(`DELETE FROM ${T.conversations} WHERE phone_number = $1 AND account_id = $2`, [
-      normalizePhone(phone),
+      normalizePhone(phone) || String(phone || '').trim(),
       Number(accountId) || 0,
     ]),
 };
 
 export const Knowledge = {
   list: (accountId) =>
-    query(`SELECT * FROM ${T.knowledge} WHERE account_id = $1 ORDER BY kind ASC, id ASC`, [accountId]),
+    accountId
+      ? query(`SELECT * FROM ${T.knowledge} WHERE account_id = $1 ORDER BY kind ASC, id ASC`, [accountId])
+      : Knowledge.listAll(),
+  listAll: () => query(`SELECT * FROM ${T.knowledge} ORDER BY kind ASC, id ASC`),
   findById: (id, accountId) =>
-    queryOne(`SELECT * FROM ${T.knowledge} WHERE id = $1 AND account_id = $2`, [id, accountId]),
+    accountId
+      ? queryOne(`SELECT * FROM ${T.knowledge} WHERE id = $1 AND account_id = $2`, [id, accountId])
+      : queryOne(`SELECT * FROM ${T.knowledge} WHERE id = $1`, [id]),
   create: ({ account_id, kind, title = '', question = '', answer = '' }) =>
     queryOne(
       `INSERT INTO ${T.knowledge} (account_id, kind, title, question, answer)
@@ -260,14 +293,20 @@ export const Knowledge = {
       }
     }
     if (!sets.length) return Knowledge.findById(id, accountId);
-    vals.push(id, accountId);
-    return queryOne(
-      `UPDATE ${T.knowledge} SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND account_id = $${vals.length} RETURNING *`,
-      vals
-    );
+    if (accountId) {
+      vals.push(id, accountId);
+      return queryOne(
+        `UPDATE ${T.knowledge} SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND account_id = $${vals.length} RETURNING *`,
+        vals
+      );
+    }
+    vals.push(id);
+    return queryOne(`UPDATE ${T.knowledge} SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals);
   },
   remove: (id, accountId) =>
-    queryOne(`DELETE FROM ${T.knowledge} WHERE id = $1 AND account_id = $2 RETURNING *`, [id, accountId]),
+    accountId
+      ? queryOne(`DELETE FROM ${T.knowledge} WHERE id = $1 AND account_id = $2 RETURNING *`, [id, accountId])
+      : queryOne(`DELETE FROM ${T.knowledge} WHERE id = $1 RETURNING *`, [id]),
   upsertByKind: async (accountId, kind, { title = '', question = '', answer = '' }) => {
     const existing = await queryOne(
       `SELECT * FROM ${T.knowledge} WHERE account_id = $1 AND kind = $2 ORDER BY id ASC LIMIT 1`,

@@ -249,5 +249,14 @@ export async function handleIncomingMessage({ from, text, accountId = 0, hostId 
     return;
   }
 
+  if (step === 'ai') {
+    await sendText(
+      from,
+      'Please send any missing details: your name, company, purpose, visit date, time, and the host you want to see.',
+      opts(acct, r)
+    );
+    return;
+  }
+
   await showMenu(from, acct, r);
 }

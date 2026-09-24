@@ -428,6 +428,30 @@
   .kb-faq-row p{margin:0; color:var(--muted); font-size:13px;}
   .kb-faq-row em{display:block; margin-top:6px; font-size:12px; color:var(--muted); font-style:normal;}
   .kb-faq-default{opacity:.88;}
+  .kb-page{display:flex; flex-direction:column; gap:18px;}
+  .kb-hero{display:flex; justify-content:space-between; gap:16px; align-items:flex-start; padding:22px 24px; border-radius:22px; background:linear-gradient(135deg,#0D0822 0%,#2B1D6B 58%,#12B5A8 160%); color:#fff;}
+  .kb-hero h3{margin:8px 0 6px; font-size:24px; letter-spacing:-0.03em;}
+  .kb-hero p{margin:0; max-width:620px; color:rgba(255,255,255,0.78); line-height:1.5;}
+  .kb-hero .dash-kicker{color:#fff;}
+  .kb-hero .ap-btn{background:rgba(255,255,255,0.12); color:#fff; border-color:rgba(255,255,255,0.18);}
+  .kb-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  .kb-card{background:#fff; border:1px solid var(--line); border-radius:20px; padding:20px; display:flex; flex-direction:column; gap:12px; box-shadow:0 12px 30px rgba(13,8,34,0.04);}
+  .kb-card-wide{grid-column:1 / -1;}
+  .kb-card header{display:flex; gap:12px; align-items:flex-start;}
+  .kb-card header h4{margin:0 0 2px; font-size:16px;}
+  .kb-card header p{margin:0; color:var(--muted); font-size:13px;}
+  .kb-card label{font-size:12px; font-weight:600; color:var(--muted); letter-spacing:.02em;}
+  .kb-card textarea,.kb-card input,.kb-inline input{width:100%; padding:12px 13px; border-radius:12px; border:1px solid var(--line); background:var(--paper); font-size:15px; outline:none; color:var(--ink-text);}
+  .kb-card textarea:focus,.kb-card input:focus{border-color:var(--violet);}
+  .kb-drop{border:1.5px dashed #c9c1e6; border-radius:16px; padding:28px 16px; display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center; cursor:pointer; background:#faf8ff; color:var(--muted);}
+  .kb-drop b{color:var(--ink-text);}
+  .kb-drop.over{border-color:var(--violet); background:#efe9ff;}
+  .kb-inline{display:flex; gap:10px;}
+  .kb-inline input{flex:1;}
+  .kb-list{display:flex; flex-direction:column; gap:8px;}
+  .kb-list article{display:flex; justify-content:space-between; gap:12px; padding:12px; border-radius:14px; background:var(--paper); border:1px solid var(--line);}
+  .kb-list article p{margin:4px 0 0; color:var(--muted); font-size:13px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;}
+  .kb-list article button{border:0; background:transparent; color:var(--bad); cursor:pointer;}
   .pass-page{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;}
   .pass-card{width:min(440px,100%); background:#fff; border:1px solid var(--line); border-radius:22px; padding:28px; box-shadow:0 20px 50px rgba(13,8,34,0.08);}
   .pass-brand{display:flex; align-items:center; gap:8px; font-weight:700; margin-bottom:18px;}
@@ -552,6 +576,10 @@
     .wa-qr-wrap{width:min(260px,72vw); height:min(260px,72vw);}
     .kb-body textarea,.kb-body input{font-size:16px;}
     .kb-body .ap-btn,.wa-link-body .ap-btn{width:100%; justify-content:center; min-height:44px;}
+    .kb-grid{grid-template-columns:1fr;}
+    .kb-hero{flex-direction:column; padding:18px 16px;}
+    .kb-inline{flex-direction:column;}
+    .kb-card textarea,.kb-card input{font-size:16px;}
     .kb-faq-row{flex-direction:column; align-items:stretch;}
     .agent-form{flex-direction:column;}
     .agent-form input{font-size:16px; min-height:48px;}

@@ -38,10 +38,13 @@ import { hostAgentChat } from '../controllers/agentController.js';
 import {
   createKnowledge,
   deleteKnowledge,
+  importWebsite,
   listKnowledge,
   saveTraining,
   updateKnowledge,
+  uploadKnowledge,
 } from '../controllers/knowledgeController.js';
+import multer from 'multer';
 import {
   hostWhatsAppConnect,
   hostWhatsAppDisconnect,
@@ -64,6 +67,11 @@ import {
 import { rateLimit, requireAuth } from '../middleware/auth.js';
 import { lookupPassEndpoint, validatePassEndpoint } from '../controllers/passController.js';
 import { whatsappQr, whatsappStatus } from '../controllers/whatsappController.js';
+
+const knowledgeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
 
 export const router = Router();
 
@@ -127,6 +135,8 @@ router.post('/host/whatsapp/connect', requireAuth('host'), hostWhatsAppConnect);
 router.post('/host/whatsapp/disconnect', requireAuth('host'), hostWhatsAppDisconnect);
 router.get('/host/knowledge', requireAuth('host'), listKnowledge);
 router.put('/host/knowledge/training', requireAuth('host'), saveTraining);
+router.post('/host/knowledge/upload', requireAuth('host'), knowledgeUpload.single('file'), uploadKnowledge);
+router.post('/host/knowledge/website', requireAuth('host'), importWebsite);
 router.post('/host/knowledge', requireAuth('host'), createKnowledge);
 router.patch('/host/knowledge/:id', requireAuth('host'), updateKnowledge);
 router.delete('/host/knowledge/:id', requireAuth('host'), deleteKnowledge);
