@@ -1,4 +1,4 @@
-import { ConversationLog, Host } from '../models/index.js';
+import { ConversationLog, Host, Visit } from '../models/index.js';
 import { decideVisitByRef } from '../services/visits.js';
 import { handleIncomingMessage } from './conversationEngine.js';
 import { handleVisitorWithAgent } from './visitorAgent.js';
@@ -15,30 +15,47 @@ function allowMessage(key) {
   return true;
 }
 
-const DECISION_RE = /^(approve|reject)\s+(vms-\d{4}-\d+)/i;
+const DECISION_RE = /\b(approve|reject)\s+(vms-\d{4}-\d+)/i;
+const SHORT_DECISION_RE = /^(yes[, ]+)?(approve|reject)(\s+it)?\.?$/i;
 
 async function handleHostCommand(from, text, ctx, fromMe = false) {
-  const match = String(text || '').match(DECISION_RE);
-  if (!match) return false;
-  const decision = match[1].toLowerCase() === 'approve' ? 'approved' : 'rejected';
-  const ref = match[2].toUpperCase();
+  const raw = String(text || '').trim();
+  const match = raw.match(DECISION_RE);
+  const short = !match && SHORT_DECISION_RE.test(raw);
+  if (!match && !short) return false;
+
+  const host = ctx.hostId ? await Host.findById(ctx.hostId) : await Host.findByPhone(from);
+  if (!host) return false;
+
+  let ref = match ? match[2].toUpperCase() : null;
+  const decision = (match ? match[1] : raw.match(SHORT_DECISION_RE)[2]).toLowerCase() === 'approve'
+    ? 'approved'
+    : 'rejected';
+  if (!ref) {
+    const pending = await Visit.list({ status: 'pending', hostId: host.id, limit: 1 });
+    ref = pending?.[0]?.ref_number || null;
+    if (!ref) {
+      await sendText(from, 'There is no pending visit for you to decide right now.', { onlyTarget: true });
+      return true;
+    }
+  }
+
   const result = await decideVisitByRef({
     ref,
     decision,
     actorPhone: from,
-    actorHostId: ctx.hostId || null,
+    actorHostId: host.id,
     notifyHostPhone: fromMe ? null : from,
   });
-  const sendOpts = { accountId: ctx.accountId, replyJid: ctx.replyJid };
   if (result.error) {
-    await sendText(from, result.error, sendOpts);
+    await sendText(from, result.error, { onlyTarget: true });
     return true;
   }
   if (result.alreadyDecided) {
     await sendText(
       from,
       `This request was already ${result.visit.status}.\nReference: ${result.visit.ref_number}`,
-      sendOpts
+      { onlyTarget: true }
     );
   }
   return true;

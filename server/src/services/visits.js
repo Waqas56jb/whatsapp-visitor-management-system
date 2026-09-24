@@ -28,6 +28,8 @@ export async function createPendingVisit({
   visitorPhone,
   actor = 'WhatsApp',
   notify = true,
+  notifyVisitor = true,
+  notifyHost = true,
 }) {
   const host = hostId ? await Host.findById(hostId) : await Host.findByName(hostName);
   if (!host) {
@@ -43,15 +45,13 @@ export async function createPendingVisit({
 
   const phone = visitorPhone ? normalizePhone(visitorPhone) : null;
   let visitor = phone ? await Visitor.findByPhone(phone) : null;
-  if (!visitor) visitor = await Visitor.findByName(name);
   if (!visitor) {
     visitor = await Visitor.create({ name, company, phone });
   } else {
-    const fields = {};
+    const fields = { name };
     if (company && company !== '—') fields.company = company;
     if (phone && !visitor.phone) fields.phone = phone;
-    if (visitor.name !== name) fields.name = name;
-    if (Object.keys(fields).length) visitor = await Visitor.update(visitor.id, fields);
+    visitor = await Visitor.update(visitor.id, fields);
   }
 
   const created = await Visit.create({
@@ -73,8 +73,10 @@ export async function createPendingVisit({
   });
 
   const full = await Visit.findById(created.id);
-  if (notify) {
+  if (notify && notifyVisitor) {
     await notifyVisitorSubmitted(full).catch((err) => console.error('Visitor submit notify failed:', err.message));
+  }
+  if (notify && notifyHost) {
     await notifyHostNewVisit(full).catch((err) => console.error('Host notify failed:', err.message));
   }
   if (phone) {

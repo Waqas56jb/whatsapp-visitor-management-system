@@ -79,11 +79,14 @@ export const Host = {
        LIMIT 8`,
       [`%${department}%`]
     ),
-  findByPhone: (phone) =>
-    queryOne(
+  findByPhone: (phone) => {
+    const digits = normalizePhone(phone);
+    if (!digits || digits.length < 8) return null;
+    return queryOne(
       `SELECT * FROM ${T.hosts} WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $1`,
-      [normalizePhone(phone)]
-    ),
+      [digits]
+    );
+  },
   findByAccountId: (accountId) =>
     queryOne(`SELECT * FROM ${T.hosts} WHERE account_id = $1`, [accountId]),
   create: ({ name, department, phone, status = 'active', account_id = null }) =>

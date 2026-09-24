@@ -1,6 +1,7 @@
 import { formatDate, formatDateNice } from '../utils/mappers.js';
 import { generateQrBuffer } from '../utils/generateToken.js';
 import { Audit, Host, Settings } from '../models/index.js';
+import { normalizePhone } from '../utils/phone.js';
 import { sendImage, sendText } from './sendMessage.js';
 
 async function locationLabel() {
@@ -20,14 +21,18 @@ export async function notifyHostNewVisit(visit) {
     return;
   }
 
-  const phone = visit.host_phone;
+  const phone = normalizePhone(host?.phone || visit.host_phone);
+  const visitorPhone = normalizePhone(visit.visitor_phone || visit.visitor_profile_phone);
   if (!phone) {
     console.warn(`Host ${visit.host_name} has no phone — skipped WhatsApp notify`);
-    return;
+    return { sent: false, reason: 'no_phone' };
+  }
+  if (visitorPhone && phone === visitorPhone) {
+    console.warn(`Host ${visit.host_name} phone matches the visitor — approve prompt not sent to visitor chat`);
+    return { sent: false, reason: 'same_phone' };
   }
 
-  const accountId = host?.account_id || null;
-  await sendText(
+  const sent = await sendText(
     phone,
     [
       '🔔 New visit request',
@@ -40,8 +45,9 @@ export async function notifyHostNewVisit(visit) {
       '',
       `Reply APPROVE ${visit.ref_number} or REJECT ${visit.ref_number}`,
     ].join('\n'),
-    { accountId }
+    { onlyTarget: true }
   );
+  return { sent, reason: sent ? null : 'send_failed' };
 }
 
 export async function notifyVisitorSubmitted(visit) {
@@ -55,7 +61,7 @@ export async function notifyVisitorSubmitted(visit) {
       'Status: Pending host approval.',
       "You'll be notified here once your host responds.",
     ].join('\n'),
-    { accountId: visit.host_account_id || null }
+    { accountId: visit.host_account_id || null, onlyTarget: true }
   );
 }
 
@@ -111,5 +117,5 @@ export async function notifyHostDecisionResult(hostPhone, visit, decision) {
     decision === 'approved'
       ? `✅ Approved. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`
       : `Request rejected. ${visit.visitor_name} will be notified automatically.\nReference: ${visit.ref_number}`;
-  await sendText(hostPhone, text, sendOpts(visit));
+  await sendText(hostPhone, text, { ...sendOpts(visit), onlyTarget: true });
 }

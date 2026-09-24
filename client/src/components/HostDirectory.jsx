@@ -82,7 +82,7 @@ export default function HostDirectory({ onToast }) {
           </span>
           <div>
             <h3>Company hosts</h3>
-            <p>Save name, WhatsApp, and department. The visitor bot only uses this list — it will not invent staff.</p>
+            <p>Save each host&apos;s personal WhatsApp number. The company number sends APPROVE / REJECT there — do not use the company number as the host phone.</p>
           </div>
         </div>
         <span className="ap-badge active">{hosts.length} hosts</span>
@@ -109,7 +109,7 @@ export default function HostDirectory({ onToast }) {
             />
           </div>
           <div className="ap-f-field">
-            <label htmlFor="hostPhone">WhatsApp number</label>
+            <label htmlFor="hostPhone">Personal WhatsApp number</label>
             <input
               id="hostPhone"
               value={form.phone}

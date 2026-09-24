@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { FIRST_TIME_WELCOME, KNOWLEDGE_DEFAULTS } from '../config/knowledgeDefaults.js';
 import { ConversationState, Knowledge, Settings, Visit } from '../models/index.js';
 import { formatDateNice } from '../utils/mappers.js';
+import { normalizePhone } from '../utils/phone.js';
 import { listActiveHosts, resolveHostForNotify } from '../services/hosts.js';
 import { createPendingVisit } from '../services/visits.js';
 import { sendText } from './sendMessage.js';
@@ -9,9 +10,13 @@ import {
   askFor,
   cleanReply,
   emptySlots,
-  extractSlotsFromText,
+  applyPlainAnswer,
+  fillEmptySlots,
   isConfirm,
+  isGreetingOnly,
+  isNewBooking,
   isOffTopic,
+  looksLikeQuestion,
   mergeSlots,
   missingSlot,
   slotsReady,
@@ -139,7 +144,15 @@ async function bookFromSlots(slots, ctx) {
     visitorPhone: ctx.from,
     actor: slots.name || 'Visitor',
     notify: true,
+    notifyVisitor: false,
+    notifyHost: true,
   });
+  const hostPhone = normalizePhone(resolved.host.phone);
+  const visitorPhone = normalizePhone(ctx.from);
+  const hostNote =
+    hostPhone && hostPhone !== visitorPhone
+      ? `${visit.host_name} has been notified on WhatsApp. You will receive a message here once they approve or reject the visit.`
+      : `${visit.host_name} will review this from the staff panel. You will receive a message here once they respond.`;
   return {
     ok: true,
     ref: visit.ref_number,
@@ -150,7 +163,7 @@ async function bookFromSlots(slots, ctx) {
       `Host: ${visit.host_name}`,
       `Date: ${formatDateNice(visit.visit_date)} at ${visit.visit_time}`,
       `Reference: ${visit.ref_number}`,
-      `${visit.host_name} has been notified. You will receive a message here once they respond.`,
+      hostNote,
     ].join('\n'),
   };
 }
@@ -165,7 +178,7 @@ async function runTool(name, args, ctx, slots) {
     };
   }
   if (name === 'book_visit') {
-    const next = mergeSlots(slots, {
+    const next = fillEmptySlots(slots, {
       name: args.name,
       company: args.company,
       purpose: args.purpose,
@@ -174,6 +187,9 @@ async function runTool(name, args, ctx, slots) {
       hostName: args.hostName,
       hostId: args.hostId || null,
     });
+    if (!slotsReady(next)) {
+      return { error: 'Missing booking fields. Ask only for the next missing field.', have: summaryLines(next) };
+    }
     return bookFromSlots(next, ctx);
   }
   if (name === 'check_status') {
@@ -204,6 +220,12 @@ async function persistTurn(from, accountId, replyJid, history, extra = {}) {
   });
 }
 
+async function replyAndSave({ from, accountId, inbound, history, body, reply, slots, lastRef }) {
+  const nextHistory = [...history, { role: 'user', content: body }, { role: 'assistant', content: reply }].slice(-20);
+  await persistTurn(from, accountId, inbound.replyJid, nextHistory, { slots, lastRef });
+  await sendText(from, reply, sendOpts(inbound));
+}
+
 export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null }) {
   const inbound = { ...(ctx || {}), from, replyJid: replyJid || ctx?.replyJid || null };
   const accountId = inbound.accountId || 0;
@@ -211,46 +233,129 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
   const kb = await buildKnowledgePrompt();
   const prior = await ConversationState.findByPhone(from, accountId);
   const state = parseState(prior, from, inbound.replyJid);
-  let slots = mergeSlots(state.slots, extractSlotsFromText(body, kb.hosts));
+  let slots = state.slots;
   let history = state.history.slice(-20);
 
-  if (!state.welcomed) {
-    const welcome = FIRST_TIME_WELCOME;
-    history = [
-      { role: 'user', content: body },
-      { role: 'assistant', content: welcome },
-    ].slice(-20);
-    await persistTurn(from, accountId, inbound.replyJid, history, { slots });
-    await sendText(from, welcome, sendOpts(inbound));
+  if (isGreetingOnly(body) || (!state.welcomed && body.length < 4)) {
+    slots = emptySlots();
+    await replyAndSave({
+      from,
+      accountId,
+      inbound,
+      history: [],
+      body,
+      reply: FIRST_TIME_WELCOME,
+      slots,
+      lastRef: state.lastRef,
+    });
     return;
   }
 
+  if (isNewBooking(body)) {
+    slots = emptySlots();
+    await replyAndSave({
+      from,
+      accountId,
+      inbound,
+      history: [],
+      body,
+      reply: FIRST_TIME_WELCOME,
+      slots,
+      lastRef: null,
+    });
+    return;
+  }
+
+  slots = applyPlainAnswer(slots, body, kb.hosts);
+
   if (isOffTopic(body)) {
-    const reply = 'I can only help with visitor bookings, visit status, and Botho Innovations reception information. Who would you like to visit?';
-    history = [...history, { role: 'user', content: body }, { role: 'assistant', content: reply }].slice(-20);
-    await persistTurn(from, accountId, inbound.replyJid, history, { slots, lastRef: state.lastRef });
-    await sendText(from, reply, sendOpts(inbound));
+    await replyAndSave({
+      from,
+      accountId,
+      inbound,
+      history,
+      body,
+      reply: 'I can only help with visitor bookings, visit status, and Botho Innovations reception information. Who would you like to visit?',
+      slots,
+      lastRef: state.lastRef,
+    });
+    return;
+  }
+
+  if (/\b(approve|reject)\b/i.test(body) && !/vms-\d{4}-\d+/i.test(body)) {
+    await replyAndSave({
+      from,
+      accountId,
+      inbound,
+      history,
+      body,
+      reply: 'I cannot approve or reject visits from this chat. The host will reply APPROVE or REJECT on their own WhatsApp, or staff can decide from the panel.',
+      slots,
+      lastRef: state.lastRef,
+    });
     return;
   }
 
   if (isConfirm(body) && slotsReady(slots)) {
     const booked = await bookFromSlots(slots, inbound);
     if (booked.ok) {
-      history = [...history, { role: 'user', content: body }, { role: 'assistant', content: booked.text }].slice(-20);
-      await persistTurn(from, accountId, inbound.replyJid, history, { slots: emptySlots(), lastRef: booked.ref });
-      await sendText(from, booked.text, sendOpts(inbound));
+      await replyAndSave({
+        from,
+        accountId,
+        inbound,
+        history,
+        body,
+        reply: booked.text,
+        slots: emptySlots(),
+        lastRef: booked.ref,
+      });
       return;
     }
     if (booked.matches?.length) {
-      const reply = `I found more than one host. Please choose one:\n${booked.matches.map((h, i) => `${i + 1}. ${h.name}${h.department ? ` (${h.department})` : ''}`).join('\n')}`;
-      history = [...history, { role: 'user', content: body }, { role: 'assistant', content: reply }].slice(-20);
-      await persistTurn(from, accountId, inbound.replyJid, history, { slots, lastRef: state.lastRef });
-      await sendText(from, reply, sendOpts(inbound));
+      await replyAndSave({
+        from,
+        accountId,
+        inbound,
+        history,
+        body,
+        reply: `I found more than one host. Please choose one:\n${booked.matches.map((h, i) => `${i + 1}. ${h.name}${h.department ? ` (${h.department})` : ''}`).join('\n')}`,
+        slots,
+        lastRef: state.lastRef,
+      });
       return;
     }
   }
 
   const missing = missingSlot(slots);
+  if (!looksLikeQuestion(body)) {
+    if (missing) {
+      await replyAndSave({
+        from,
+        accountId,
+        inbound,
+        history,
+        body,
+        reply: askFor(missing),
+        slots,
+        lastRef: state.lastRef,
+      });
+      return;
+    }
+    if (slotsReady(slots) && !isConfirm(body)) {
+      await replyAndSave({
+        from,
+        accountId,
+        inbound,
+        history,
+        body,
+        reply: `Please confirm these details only:\n${summaryLines(slots)}\nReply yes to submit, or tell me what to change.`,
+        slots,
+        lastRef: state.lastRef,
+      });
+      return;
+    }
+  }
+
   const messages = [
     {
       role: 'system',
@@ -259,10 +364,13 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
         'Stay inside visitor management only: bookings, host matching, visit status, and the company knowledge below.',
         'If asked for programming, code, homework, or anything outside reception, politely refuse and return to the booking.',
         'Write like a calm receptionist. Short, clear, professional. No asterisks, no markdown, no bullet stars, no emojis unless the visitor uses them.',
-        'Use the last 20 messages and the collected fields. Never ask again for a field that is already collected.',
+        `Never say "How can I assist you today?" or any generic chatbot greeting. If you need to greet, use exactly: ${FIRST_TIME_WELCOME}`,
+        'Collected fields are the only source of truth. Never copy name, company, purpose, date, time, or host from an older booking in the chat history.',
+        'Never invent a visitor name, company, purpose, date, or time. If a field is missing, ask for it. Do not reuse the previous visitor.',
         'A visitor and a host may share the same name. That is valid. Do not assume the visitor is booking themselves.',
         'Do not invent hosts, departments, prices, or policies. Match hosts only with lookup_host or the saved host list.',
-        'When every field is present and the visitor confirms, call book_visit. Then confirm the reference in plain text.',
+        'Never approve or reject a visit. Only the named host on WhatsApp or staff on the panel can do that.',
+        'When every field is present and the visitor confirms, call book_visit using only the collected fields. Then confirm the reference in plain text.',
         `Collected fields so far:\n${summaryLines(slots)}`,
         missing ? `Next missing field: ${missing}. Ask only for that.` : 'All booking fields are present. Confirm once, then book.',
         kb.instruction ? `Business instructions:\n${kb.instruction}` : '',
@@ -292,6 +400,7 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
   let reply = '';
   let bookedRef = state.lastRef;
+  let bookedDone = false;
 
   try {
     for (let i = 0; i < 5; i += 1) {
@@ -325,18 +434,24 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
           if (result.ok && result.ref) {
             bookedRef = result.ref;
             slots = emptySlots();
+            bookedDone = true;
             if (result.text) reply = result.text;
           }
           messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         }
+        if (bookedDone) break;
         continue;
       }
-      reply = cleanReply(assistant.content || '');
+      if (!bookedDone) reply = cleanReply(assistant.content || '');
       break;
     }
   } catch (err) {
     console.error('Visitor agent failed:', err.message);
     reply = '';
+  }
+
+  if (/how can i assist you today/i.test(reply)) {
+    reply = missing ? askFor(missing) : FIRST_TIME_WELCOME;
   }
 
   if (!reply) {

@@ -44,6 +44,35 @@ export function isConfirm(text) {
   return /^(yes|yeah|yep|yup|ok|okay|sure|please|proceed|confirm|book|do it)\b/.test(value) || /book my|please book|go ahead|that is correct|that's correct|confirmed/.test(value);
 }
 
+export function isGreetingOnly(text) {
+  return /^(hi|hii|hello|hey|salam|salaam|good morning|good afternoon|good evening|assalam|hi there)$/i.test(
+    String(text || '').trim()
+  );
+}
+
+export function isNewBooking(text) {
+  return /\b(another booking|new booking|new visit|another visit|start over|reset|fresh booking)\b/i.test(
+    String(text || '')
+  );
+}
+
+export function fillEmptySlots(base = {}, extra = {}) {
+  const out = mergeSlots({}, base);
+  for (const key of Object.keys(emptySlots())) {
+    if (!out[key] && extra[key]) out[key] = extra[key];
+  }
+  return out;
+}
+
+export function looksLikeQuestion(text) {
+  const value = String(text || '').trim();
+  return (
+    /\?$/.test(value) ||
+    /^(what|where|when|who|how|can i|do you|did|is |are |status|check)\b/i.test(value) ||
+    /\b(status|reference|vms-\d{4}-\d+)\b/i.test(value)
+  );
+}
+
 export function isOffTopic(text) {
   return /\b(c\+\+|javascript|python|html|css|react|write (me )?code|source code|calculator program|leetcode)\b/i.test(
     String(text || '')
@@ -102,24 +131,48 @@ export function extractSlotsFromText(text, hosts = []) {
     const name = String(host.name || '').toLowerCase();
     const dept = String(host.department || '').toLowerCase();
     if (name && lower.includes(name)) scored.push({ host, score: 10 });
-    else if (dept && (lower.includes(dept) || dept.split(/\s+/).some((part) => part.length > 3 && lower.includes(part)))) {
+    else if (name.split(/\s+/).some((part) => part.length > 2 && lower.split(/[^a-z0-9]+/).includes(part))) {
+      scored.push({ host, score: 7 });
+    } else if (dept && (lower.includes(dept) || dept.split(/\s+/).some((part) => part.length > 3 && lower.includes(part)))) {
       scored.push({ host, score: 4 });
     }
   }
   scored.sort((a, b) => b.score - a.score);
-  if (scored[0] && (scored[0].score >= 10 || looksLikeVisitHost(raw))) {
+  if (scored[0] && (scored[0].score >= 10 || (looksLikeVisitHost(raw) && scored[0].score >= 7))) {
     const top = scored.filter((item) => item.score === scored[0].score).map((item) => item.host);
     if (top.length === 1) {
-      next.hostName = top[0].name;
-      next.hostId = top[0].id;
-      next.hostDept = top[0].department || '';
-    } else if (top.length > 1 && scored[0].score >= 10) {
       next.hostName = top[0].name;
       next.hostId = top[0].id;
       next.hostDept = top[0].department || '';
     }
   }
 
+  return next;
+}
+
+export function applyPlainAnswer(slots, text, hosts = []) {
+  const extracted = extractSlotsFromText(text, hosts);
+  const next = mergeSlots(slots, extracted);
+  const missing = missingSlot(slots);
+  const raw = String(text || '').trim();
+  if (!missing || isConfirm(raw) || isGreetingOnly(raw) || isNewBooking(raw) || looksLikeQuestion(raw)) return next;
+  if (missing === 'name' && !extracted.name && /^[A-Za-z][A-Za-z .'-]{1,60}$/.test(raw) && raw.split(/\s+/).length <= 5) {
+    next.name = raw.replace(/\s+/g, ' ');
+  }
+  if (missing === 'company' && !extracted.company && raw.length > 1 && raw.length < 80) {
+    next.company = raw.replace(/\s+/g, ' ');
+  }
+  if (missing === 'purpose' && !extracted.purpose && raw.length > 2 && raw.length < 160) {
+    next.purpose = raw;
+  }
+  if (missing === 'date' && !extracted.date) {
+    const date = extractDateFromText(raw);
+    if (date) next.date = date;
+  }
+  if (missing === 'time' && !extracted.time) {
+    const time = extractTimeFromText(raw);
+    if (time) next.time = time;
+  }
   return next;
 }
 
