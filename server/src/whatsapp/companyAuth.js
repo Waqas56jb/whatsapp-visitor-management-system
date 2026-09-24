@@ -1,57 +1,41 @@
-import { BufferJSON, initAuthCreds, proto } from '@whiskeysockets/baileys';
+import fs from 'fs';
+import path from 'path';
 import { CompanyWhatsApp } from '../models/index.js';
 
-function encode(value) {
-  return JSON.parse(JSON.stringify(value, BufferJSON.replacer));
-}
-
-function decode(value) {
-  if (!value) return null;
-  return JSON.parse(JSON.stringify(value), BufferJSON.reviver);
-}
-
-export async function useCompanyAuthState() {
+export async function restoreAuthDir(dir) {
   const row = await CompanyWhatsApp.get();
-  const creds = decode(row?.creds) || initAuthCreds();
-  const keys = decode(row?.keys) || {};
-
-  async function persist(nextCreds = creds, nextKeys = keys) {
-    await CompanyWhatsApp.saveAuth({
-      creds: encode(nextCreds),
-      keys: encode(nextKeys),
-    });
+  const files = row?.keys;
+  if (!files || typeof files !== 'object' || !files['creds.json']) return false;
+  await fs.promises.mkdir(dir, { recursive: true });
+  for (const [name, raw] of Object.entries(files)) {
+    if (!name.endsWith('.json') || typeof raw !== 'string') continue;
+    await fs.promises.writeFile(path.join(dir, name), raw, 'utf8');
   }
+  return true;
+}
 
-  return {
-    registered: Boolean(creds?.me?.id),
-    creds,
-    state: {
-      creds,
-      keys: {
-        get: async (type, ids) => {
-          const data = {};
-          for (const id of ids) {
-            let value = keys[type]?.[id];
-            if (type === 'app-state-sync-key' && value) {
-              value = proto.Message.AppStateSyncKeyData.fromObject(value);
-            }
-            data[id] = value;
-          }
-          return data;
-        },
-        set: async (data) => {
-          for (const type of Object.keys(data || {})) {
-            keys[type] = keys[type] || {};
-            for (const id of Object.keys(data[type] || {})) {
-              const value = data[type][id];
-              if (value == null) delete keys[type][id];
-              else keys[type][id] = value;
-            }
-          }
-          await persist(creds, keys);
-        },
-      },
-    },
-    saveCreds: async () => persist(creds, keys),
-  };
+export async function snapshotAuthDir(dir) {
+  if (!fs.existsSync(dir)) return;
+  const names = await fs.promises.readdir(dir);
+  const files = {};
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    files[name] = await fs.promises.readFile(path.join(dir, name), 'utf8');
+  }
+  if (!files['creds.json']) return;
+  await CompanyWhatsApp.saveAuth({ creds: { stored: true }, keys: files });
+}
+
+export async function clearAuthDir(dir) {
+  await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
+export function hasSavedCreds(dir) {
+  try {
+    const raw = fs.readFileSync(path.join(dir, 'creds.json'), 'utf8');
+    const creds = JSON.parse(raw);
+    return Boolean(creds?.me?.id || creds?.me?.name);
+  } catch {
+    return false;
+  }
 }

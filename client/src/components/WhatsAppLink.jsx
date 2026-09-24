@@ -107,7 +107,15 @@ export default function WhatsAppLink({ onToast }) {
           </div>
         </div>
         <span className={'ap-badge ' + (status.connected ? 'approved' : 'pending')}>
-          {status.connected ? (status.reconnecting ? 'Linked · reconnecting' : 'Company linked') : status.connecting ? 'Waiting for company scan' : 'Not linked'}
+          {status.connected
+            ? status.reconnecting
+              ? 'Linked · connecting'
+              : 'Company linked'
+            : status.qrDataUrl
+              ? 'Waiting for company scan'
+              : status.connecting
+                ? 'Linking…'
+                : 'Not linked'}
         </span>
       </div>
       <div className="wa-link-body">
@@ -115,7 +123,11 @@ export default function WhatsAppLink({ onToast }) {
           <div className="wa-linked">
             <Link2 size={28} strokeWidth={1.7} />
             <b>Company number linked: {linkedNumber}</b>
-            <p>Visitors message this company WhatsApp. Hosts are notified on the personal numbers saved in Company hosts. All client accounts see this same connection.</p>
+            <p>
+              {status.reconnecting
+                ? 'Session is reconnecting. The visitor AI stays on this company number — no new QR will be issued.'
+                : 'Visitor AI is active on this company WhatsApp. Hosts are notified on the personal numbers saved in Company hosts.'}
+            </p>
             <button className="ap-btn ap-btn-danger ap-btn-sm" onClick={disconnect} disabled={busy}>
               <Unplug size={14} /> Unlink company number
             </button>
