@@ -4,7 +4,7 @@ import { normalizePhone } from '../utils/phone.js';
 
 export const Admin = {
   findByUsername: (username) =>
-    queryOne(`SELECT * FROM ${T.admins} WHERE username = $1`, [username]),
+    queryOne(`SELECT * FROM ${T.admins} WHERE LOWER(username) = LOWER($1)`, [username]),
   create: (username, password_hash, name = 'Admin') =>
     queryOne(
       `INSERT INTO ${T.admins} (username, password_hash, name) VALUES ($1,$2,$3) RETURNING *`,
@@ -14,13 +14,25 @@ export const Admin = {
 
 export const Account = {
   findByUsername: (username) =>
-    queryOne(`SELECT * FROM ${T.accounts} WHERE username = $1`, [username]),
+    queryOne(`SELECT * FROM ${T.accounts} WHERE LOWER(username) = LOWER($1)`, [username]),
   findById: (id) => queryOne(`SELECT * FROM ${T.accounts} WHERE id = $1`, [id]),
   list: () => query(`SELECT * FROM ${T.accounts} ORDER BY created_at DESC`),
   create: ({ name, username, password_hash, role, status = 'active' }) =>
     queryOne(
       `INSERT INTO ${T.accounts} (name, username, password_hash, role, status)
        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [name, username, password_hash, role, status]
+    ),
+  upsertLogin: ({ name, username, password_hash, role = 'Host', status = 'active' }) =>
+    queryOne(
+      `INSERT INTO ${T.accounts} (name, username, password_hash, role, status)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (username) DO UPDATE
+         SET name = EXCLUDED.name,
+             password_hash = EXCLUDED.password_hash,
+             role = EXCLUDED.role,
+             status = EXCLUDED.status
+       RETURNING *`,
       [name, username, password_hash, role, status]
     ),
   toggle: (id) =>

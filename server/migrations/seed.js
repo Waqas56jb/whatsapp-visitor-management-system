@@ -23,7 +23,10 @@ async function seed() {
   const account = await queryOne(
     `INSERT INTO ${T.accounts} (name, username, password_hash, role, status)
      VALUES ('Boikarabelo Ramaretlwa', 'boikarabelo', $1, 'Host', 'active')
-     ON CONFLICT (username) DO UPDATE SET name = EXCLUDED.name
+     ON CONFLICT (username) DO UPDATE
+       SET name = EXCLUDED.name,
+           password_hash = EXCLUDED.password_hash,
+           status = 'active'
      RETURNING *`,
     [hostHash]
   );
