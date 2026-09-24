@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, FileUp, Globe, Plus, RotateCcw, Scale, Trash2, Upload } from 'lucide-react';
+import { BookOpen, FileText, Globe, HelpCircle, Plus, RotateCcw, Scale, Trash2, Upload } from 'lucide-react';
 import api from '../api/client';
 
 const DEFAULT_GREETING =
@@ -7,7 +7,30 @@ const DEFAULT_GREETING =
 const DEFAULT_INSTRUCTION =
   'Always ask who they are visiting (host name or department). Notify only that saved host. Answer only from this knowledge base. Never invent services, staff, or prices.';
 
+const TABS = [
+  { id: 'voice', label: 'Voice', icon: BookOpen },
+  { id: 'rules', label: 'Rules', icon: Scale },
+  { id: 'files', label: 'Files', icon: FileText },
+  { id: 'web', label: 'Website', icon: Globe },
+  { id: 'faq', label: 'Q&A', icon: HelpCircle },
+];
+
+function ItemRow({ title, text, onRemove, busy }) {
+  return (
+    <div className="kb-item">
+      <div>
+        {title ? <b>{title}</b> : null}
+        <p>{text}</p>
+      </div>
+      <button className="ap-btn ap-btn-danger ap-btn-sm" type="button" disabled={busy} onClick={onRemove} aria-label="Delete">
+        <Trash2 size={13} />
+      </button>
+    </div>
+  );
+}
+
 export default function KnowledgeBase({ onToast }) {
+  const [tab, setTab] = useState('voice');
   const [items, setItems] = useState([]);
   const [greeting, setGreeting] = useState(DEFAULT_GREETING);
   const [instruction, setInstruction] = useState(DEFAULT_INSTRUCTION);
@@ -26,6 +49,7 @@ export default function KnowledgeBase({ onToast }) {
   const faqs = items.filter((i) => i.kind === 'qa');
   const documents = items.filter((i) => i.kind === 'document' || i.kind === 'text');
   const websites = items.filter((i) => i.kind === 'website');
+  const trained = rules.length + faqs.length + documents.length + websites.length;
 
   async function load() {
     const { data } = await api.get('/host/knowledge');
@@ -144,177 +168,178 @@ export default function KnowledgeBase({ onToast }) {
     }
   }
 
-  function onDrop(e) {
-    e.preventDefault();
-    setDrag(false);
-    uploadFile(e.dataTransfer.files?.[0]);
-  }
-
   return (
-    <div className="kb-page">
-      <div className="kb-hero">
-        <div>
-          <span className="dash-kicker">
-            <BookOpen size={14} /> Company knowledge
+    <div className="ap-panel kb-shell">
+      <div className="ap-panel-head">
+        <div className="ap-panel-title">
+          <span className="ap-panel-ic">
+            <BookOpen size={16} strokeWidth={2} />
           </span>
-          <h3>Train the Botho visitor agent</h3>
-          <p>Upload documents, paste service text, add website links and business rules. The WhatsApp agent answers only from this library — it will not invent facts.</p>
+          <div>
+            <h3>Company knowledge</h3>
+            <p>Train the visitor agent with your voice, rules, files, and FAQs. It answers only from this library.</p>
+          </div>
         </div>
-        <button className="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={busy} onClick={() => { setGreeting(DEFAULT_GREETING); setInstruction(DEFAULT_INSTRUCTION); onToast?.('Default text restored in the form. Save to apply.'); }}>
-          <RotateCcw size={14} /> Reset greeting
-        </button>
+        <span className="ap-badge active">{trained} sources</span>
       </div>
 
-      <div className="kb-grid">
-        <section className="kb-card">
-          <header>
-            <BookOpen size={18} />
-            <div>
-              <h4>Welcome &amp; voice</h4>
-              <p>First message and how the agent should behave</p>
-            </div>
-          </header>
-          <label>Welcome message</label>
-          <textarea rows={3} value={greeting} onChange={(e) => setGreeting(e.target.value)} />
-          <button className="ap-btn ap-btn-teal ap-btn-sm" disabled={busy} onClick={() => saveKind('greeting', greeting, greetingRow)}>
-            Save greeting
-          </button>
-          <label>Agent instructions</label>
-          <textarea rows={3} value={instruction} onChange={(e) => setInstruction(e.target.value)} />
-          <button className="ap-btn ap-btn-ghost ap-btn-sm" disabled={busy} onClick={() => saveKind('instruction', instruction, instructionRow)}>
-            Save instructions
-          </button>
-        </section>
+      <div className="kb-tabs" role="tablist">
+        {TABS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              className={'kb-tab' + (tab === item.id ? ' active' : '')}
+              onClick={() => setTab(item.id)}
+            >
+              <Icon size={15} />
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
 
-        <section className="kb-card">
-          <header>
-            <Scale size={18} />
-            <div>
-              <h4>Business rules</h4>
-              <p>Hours, visitor policy, what the agent must never say</p>
-            </div>
-          </header>
-          <textarea rows={4} value={rule} onChange={(e) => setRule(e.target.value)} placeholder="Office hours are 8am–5pm. Visitors must be approved before entry." />
-          <button className="ap-btn ap-btn-teal ap-btn-sm" disabled={busy} onClick={addRule}>
-            <Plus size={14} /> Save rule
-          </button>
-          <div className="kb-list">
-            {rules.map((item) => (
-              <article key={item.id}>
-                <p>{item.answer}</p>
-                <button type="button" onClick={() => remove(item.id)} disabled={busy} aria-label="Delete rule">
-                  <Trash2 size={14} />
-                </button>
-              </article>
-            ))}
+      {tab === 'voice' ? (
+        <div className="kb-pane">
+          <div className="ap-f-field">
+            <label htmlFor="kbGreeting">Welcome message</label>
+            <textarea id="kbGreeting" rows={3} value={greeting} onChange={(e) => setGreeting(e.target.value)} />
           </div>
-        </section>
+          <div className="kb-actions">
+            <button className="ap-btn ap-btn-ghost ap-btn-sm" type="button" disabled={busy} onClick={() => { setGreeting(DEFAULT_GREETING); setInstruction(DEFAULT_INSTRUCTION); onToast?.('Default text restored. Save to apply.'); }}>
+              <RotateCcw size={14} /> Reset
+            </button>
+            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={() => saveKind('greeting', greeting, greetingRow)}>
+              Save greeting
+            </button>
+          </div>
+          <div className="ap-f-field">
+            <label htmlFor="kbInstruction">Agent instructions</label>
+            <textarea id="kbInstruction" rows={3} value={instruction} onChange={(e) => setInstruction(e.target.value)} />
+          </div>
+          <div className="kb-actions">
+            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={() => saveKind('instruction', instruction, instructionRow)}>
+              Save instructions
+            </button>
+          </div>
+        </div>
+      ) : null}
 
-        <section className="kb-card kb-card-wide">
-          <header>
-            <FileUp size={18} />
-            <div>
-              <h4>Documents &amp; service notes</h4>
-              <p>PDF, Word, or text — stored in the database and used for answers</p>
-            </div>
-          </header>
-          <div
+      {tab === 'rules' ? (
+        <div className="kb-pane">
+          <div className="ap-f-field">
+            <label htmlFor="kbRule">Business rule</label>
+            <textarea id="kbRule" rows={3} value={rule} onChange={(e) => setRule(e.target.value)} placeholder="Office hours are 8am–5pm. Visitors must be approved before entry." />
+          </div>
+          <div className="kb-actions">
+            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addRule}>
+              <Plus size={14} /> Add rule
+            </button>
+          </div>
+          <div className="kb-items">
+            {rules.length ? (
+              rules.map((item) => <ItemRow key={item.id} text={item.answer} busy={busy} onRemove={() => remove(item.id)} />)
+            ) : (
+              <p className="kb-empty">No rules yet. Add visiting hours, dress code, or what the agent must never say.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {tab === 'files' ? (
+        <div className="kb-pane">
+          <button
+            type="button"
             className={'kb-drop' + (drag ? ' over' : '')}
             onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
             onDragLeave={() => setDrag(false)}
-            onDrop={onDrop}
+            onDrop={(e) => { e.preventDefault(); setDrag(false); uploadFile(e.dataTransfer.files?.[0]); }}
             onClick={() => fileRef.current?.click()}
           >
-            <Upload size={22} />
-            <b>Drop a PDF, Word, or text file</b>
-            <span>or click to browse · max 8 MB</span>
-            <input
-              ref={fileRef}
-              type="file"
-              hidden
-              accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain"
-              onChange={(e) => uploadFile(e.target.files?.[0])}
-            />
-          </div>
-          <label>Or paste service text</label>
-          <textarea rows={4} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Describe your services, products, or visitor process…" />
-          <button className="ap-btn ap-btn-teal ap-btn-sm" disabled={busy} onClick={addNote}>
-            <Plus size={14} /> Save text
-          </button>
-          <div className="kb-list">
-            {documents.map((item) => (
-              <article key={item.id}>
-                <div>
-                  <b>{item.title || 'Document'}</b>
-                  <p>{item.preview || item.answer}</p>
-                </div>
-                <button type="button" onClick={() => remove(item.id)} disabled={busy} aria-label="Delete document">
-                  <Trash2 size={14} />
-                </button>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="kb-card">
-          <header>
-            <Globe size={18} />
+            <span className="ap-panel-ic">
+              <Upload size={16} />
+            </span>
             <div>
-              <h4>Website link</h4>
-              <p>Import a public page so the agent can talk about your services</p>
+              <b>Upload PDF, Word, or text</b>
+              <p>Drop a file here or browse · max 8 MB</p>
             </div>
-          </header>
-          <div className="kb-inline">
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://bothoinnovations.com" />
-            <button className="ap-btn ap-btn-teal ap-btn-sm" disabled={busy} onClick={addWebsite}>
-              Import
+            <input ref={fileRef} type="file" hidden accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain" onChange={(e) => uploadFile(e.target.files?.[0])} />
+          </button>
+          <div className="ap-f-field">
+            <label htmlFor="kbNote">Or paste service notes</label>
+            <textarea id="kbNote" rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Describe your services, products, or visitor process…" />
+          </div>
+          <div className="kb-actions">
+            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addNote}>
+              <Plus size={14} /> Save notes
             </button>
           </div>
-          <div className="kb-list">
-            {websites.map((item) => (
-              <article key={item.id}>
-                <div>
-                  <b>{item.title || 'Website'}</b>
-                  <p>{item.question}</p>
-                </div>
-                <button type="button" onClick={() => remove(item.id)} disabled={busy} aria-label="Delete website">
-                  <Trash2 size={14} />
-                </button>
-              </article>
-            ))}
+          <div className="kb-items">
+            {documents.length ? (
+              documents.map((item) => (
+                <ItemRow key={item.id} title={item.title || 'Document'} text={item.preview || item.answer} busy={busy} onRemove={() => remove(item.id)} />
+              ))
+            ) : (
+              <p className="kb-empty">No documents yet. Upload a brochure or paste service text.</p>
+            )}
           </div>
-        </section>
+        </div>
+      ) : null}
 
-        <section className="kb-card">
-          <header>
-            <BookOpen size={18} />
-            <div>
-              <h4>Questions &amp; answers</h4>
-              <p>Short facts the agent can quote exactly</p>
-            </div>
-          </header>
-          <label>Question</label>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Where should visitors park?" />
-          <label>Answer</label>
-          <textarea rows={2} value={a} onChange={(e) => setA(e.target.value)} placeholder="Visitor parking is at the basement." />
-          <button className="ap-btn ap-btn-teal ap-btn-sm" disabled={busy} onClick={addFaq}>
-            <Plus size={14} /> Add question
-          </button>
-          <div className="kb-list">
-            {faqs.map((item) => (
-              <article key={item.id}>
-                <div>
-                  <b>{item.question || item.title}</b>
-                  <p>{item.answer}</p>
-                </div>
-                <button type="button" onClick={() => remove(item.id)} disabled={busy} aria-label="Delete question">
-                  <Trash2 size={14} />
-                </button>
-              </article>
-            ))}
+      {tab === 'web' ? (
+        <div className="kb-pane">
+          <div className="ap-f-field">
+            <label htmlFor="kbUrl">Website URL</label>
+            <input id="kbUrl" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://bothoinnovations.com" />
           </div>
-        </section>
-      </div>
+          <div className="kb-actions">
+            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addWebsite}>
+              Import page
+            </button>
+          </div>
+          <div className="kb-items">
+            {websites.length ? (
+              websites.map((item) => (
+                <ItemRow key={item.id} title={item.title || 'Website'} text={item.question} busy={busy} onRemove={() => remove(item.id)} />
+              ))
+            ) : (
+              <p className="kb-empty">No websites yet. Import a public page about your services.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {tab === 'faq' ? (
+        <div className="kb-pane">
+          <div className="kb-faq-grid">
+            <div className="ap-f-field">
+              <label htmlFor="kbQ">Question</label>
+              <input id="kbQ" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Where should visitors park?" />
+            </div>
+            <div className="ap-f-field">
+              <label htmlFor="kbA">Answer</label>
+              <textarea id="kbA" rows={2} value={a} onChange={(e) => setA(e.target.value)} placeholder="Visitor parking is at the basement." />
+            </div>
+          </div>
+          <div className="kb-actions">
+            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addFaq}>
+              <Plus size={14} /> Add question
+            </button>
+          </div>
+          <div className="kb-items">
+            {faqs.length ? (
+              faqs.map((item) => (
+                <ItemRow key={item.id} title={item.question || item.title} text={item.answer} busy={busy} onRemove={() => remove(item.id)} />
+              ))
+            ) : (
+              <p className="kb-empty">No questions yet. Add short facts the agent can quote exactly.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

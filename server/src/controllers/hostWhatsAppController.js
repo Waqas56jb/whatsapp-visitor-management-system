@@ -1,12 +1,11 @@
-import { getCompanyWhatsAppStatus, startCompanyWhatsApp, stopCompanyWhatsApp } from '../whatsapp/connection.js';
+import { getCompanyWhatsAppStatus, hydrateCompanyCache, startCompanyWhatsApp, stopCompanyWhatsApp } from '../whatsapp/connection.js';
 
 export async function hostWhatsAppStatus(req, res) {
+  await hydrateCompanyCache();
   res.json(getCompanyWhatsAppStatus(true));
 }
 
 export async function hostWhatsAppConnect(req, res) {
-  const current = getCompanyWhatsAppStatus(true);
-  if (current.connected) return res.json(current);
   const status = await startCompanyWhatsApp();
   res.json(status);
 }

@@ -16,6 +16,7 @@ const files = [
   '005_add_blocked_status.sql',
   '006_client_whatsapp.sql',
   '007_restore_pin.sql',
+  '008_company_whatsapp.sql',
 ];
 
 try {

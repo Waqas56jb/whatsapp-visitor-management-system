@@ -449,6 +449,61 @@ export const Audit = {
     ),
 };
 
+export const CompanyWhatsApp = {
+  ensure: async () => {
+    await query(`
+      CREATE TABLE IF NOT EXISTS ${T.companyWhatsApp} (
+        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        status TEXT NOT NULL DEFAULT 'disconnected',
+        phone TEXT,
+        wa_name TEXT,
+        creds JSONB,
+        keys JSONB,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`INSERT INTO ${T.companyWhatsApp} (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+  },
+  get: async () => {
+    await CompanyWhatsApp.ensure();
+    return queryOne(`SELECT * FROM ${T.companyWhatsApp} WHERE id = 1`);
+  },
+  saveAuth: async ({ creds = null, keys = null }) => {
+    await CompanyWhatsApp.ensure();
+    return queryOne(
+      `UPDATE ${T.companyWhatsApp}
+       SET creds = COALESCE($1::jsonb, creds),
+           keys = COALESCE($2::jsonb, keys),
+           updated_at = NOW()
+       WHERE id = 1
+       RETURNING *`,
+      [creds == null ? null : JSON.stringify(creds), keys == null ? null : JSON.stringify(keys)]
+    );
+  },
+  saveLink: async ({ status, phone = undefined, wa_name = undefined }) => {
+    await CompanyWhatsApp.ensure();
+    return queryOne(
+      `UPDATE ${T.companyWhatsApp}
+       SET status = $1,
+           phone = COALESCE($2, phone),
+           wa_name = COALESCE($3, wa_name),
+           updated_at = NOW()
+       WHERE id = 1
+       RETURNING *`,
+      [status, phone ?? null, wa_name ?? null]
+    );
+  },
+  clear: async () => {
+    await CompanyWhatsApp.ensure();
+    return queryOne(
+      `UPDATE ${T.companyWhatsApp}
+       SET status = 'disconnected', phone = NULL, wa_name = NULL, creds = NULL, keys = NULL, updated_at = NOW()
+       WHERE id = 1
+       RETURNING *`
+    );
+  },
+};
+
 export const Settings = {
   get: () => queryOne(`SELECT * FROM ${T.settings} WHERE id = 1`),
   upsert: ({ org_name, phone, email }) =>

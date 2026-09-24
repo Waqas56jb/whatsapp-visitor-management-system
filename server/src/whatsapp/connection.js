@@ -10,6 +10,8 @@ import makeWASocket, {
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
 import pino from 'pino';
+import { CompanyWhatsApp } from '../models/index.js';
+import { useCompanyAuthState } from './companyAuth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const SERVER_ROOT = path.resolve(__dirname, '../..');
@@ -19,6 +21,28 @@ export const QR_FILE = path.join(SERVER_ROOT, 'whatsapp-qr.png');
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' });
 
 const sessions = new Map();
+
+const companyCache = {
+  status: 'disconnected',
+  phone: null,
+  wa_name: null,
+  registered: false,
+};
+
+export async function hydrateCompanyCache() {
+  try {
+    const row = await CompanyWhatsApp.get();
+    if (!row) return companyCache;
+    companyCache.status = row.status || 'disconnected';
+    companyCache.phone = row.phone || null;
+    companyCache.wa_name = row.wa_name || null;
+    companyCache.registered = Boolean(row.creds && (row.creds.me?.id || row.creds.me?.name));
+    return companyCache;
+  } catch (err) {
+    console.error('Company WhatsApp cache failed:', err.message);
+    return companyCache;
+  }
+}
 
 function emptyStatus() {
   return {
@@ -84,29 +108,75 @@ export function getClientWhatsAppStatus(accountId, includeQr = false) {
 }
 
 export function getCompanyWhatsAppStatus(includeQr = false) {
-  const status = publicStatus(sessions.get('admin'), includeQr);
-  if (status.connected) {
-    status.qrDataUrl = null;
-    status.qrAvailable = false;
-    status.connecting = false;
+  const live = publicStatus(sessions.get('admin'), includeQr);
+  const saved =
+    companyCache.status === 'connected' ||
+    Boolean(companyCache.phone) ||
+    companyCache.registered;
+  const user = live.user || (companyCache.phone || companyCache.wa_name
+    ? { id: companyCache.phone, name: companyCache.wa_name }
+    : null);
+
+  if (live.connected || saved) {
+    return {
+      connected: true,
+      connecting: false,
+      reconnecting: saved && !live.connected,
+      qrAvailable: false,
+      qrDataUrl: null,
+      user,
+      phone: companyCache.phone || user?.id || null,
+      shared: true,
+      scope: 'company',
+    };
   }
+
   return {
-    ...status,
+    ...live,
+    user,
+    phone: companyCache.phone,
     shared: true,
     scope: 'company',
   };
 }
 
+async function persistCompanyLink(extras = {}) {
+  const phone = extras.phone ?? companyCache.phone ?? null;
+  const wa_name = extras.wa_name ?? companyCache.wa_name ?? null;
+  const status = extras.status || companyCache.status || 'disconnected';
+  companyCache.status = status;
+  if (phone !== undefined) companyCache.phone = phone;
+  if (wa_name !== undefined) companyCache.wa_name = wa_name;
+  if (status === 'connected') companyCache.registered = true;
+  if (status === 'disconnected' && extras.clear) {
+    companyCache.phone = null;
+    companyCache.wa_name = null;
+    companyCache.registered = false;
+  }
+  try {
+    if (extras.clear) await CompanyWhatsApp.clear();
+    else await CompanyWhatsApp.saveLink({ status, phone, wa_name });
+  } catch (err) {
+    console.error('Company WhatsApp persist failed:', err.message);
+  }
+}
+
 async function persistLink(session, extras = {}) {
+  const phone = extras.phone ?? session.status.user?.id?.split(':')[0] ?? null;
+  const wa_name = extras.wa_name ?? session.status.user?.name ?? null;
+  const status = extras.status || (session.status.connected ? 'connected' : session.status.connecting ? 'connecting' : 'disconnected');
+  if (session?.key === 'admin') {
+    await persistCompanyLink({ status, phone, wa_name, clear: extras.clear });
+  }
   if (!session?.accountId) return;
   try {
     const { WhatsAppLink } = await import('../models/index.js');
     await WhatsAppLink.upsert({
       account_id: session.accountId,
       host_id: session.hostId || null,
-      phone: extras.phone ?? session.status.user?.id?.split(':')[0] ?? null,
-      wa_name: extras.wa_name ?? session.status.user?.name ?? null,
-      status: extras.status || (session.status.connected ? 'connected' : session.status.connecting ? 'connecting' : 'disconnected'),
+      phone,
+      wa_name,
+      status,
     });
   } catch (err) {
     console.error('WhatsApp link persist failed:', err.message);
@@ -144,7 +214,21 @@ export async function startSession(key, options = {}) {
 
   const dir = authDirFor(key);
   await fs.promises.mkdir(dir, { recursive: true });
-  const { state, saveCreds } = await useMultiFileAuthState(dir);
+  let state;
+  let saveCreds;
+  if (key === 'admin') {
+    const dbAuth = await useCompanyAuthState();
+    state = dbAuth.state;
+    saveCreds = dbAuth.saveCreds;
+    if (dbAuth.registered) {
+      companyCache.registered = true;
+      if (companyCache.status !== 'disconnected') companyCache.status = 'connected';
+    }
+  } else {
+    const fileAuth = await useMultiFileAuthState(dir);
+    state = fileAuth.state;
+    saveCreds = fileAuth.saveCreds;
+  }
   const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
 
   const sock = makeWASocket({
@@ -163,16 +247,19 @@ export async function startSession(key, options = {}) {
     if (!current || current.generation !== myGen) return;
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
-      if (key === 'admin') {
-        console.log('\nScan this QR with WhatsApp → Linked Devices → Link a device\n');
-        qrcodeTerminal.generate(qr, { small: true });
-        await saveAdminQrFile(qr).catch((err) => console.error('Could not write WhatsApp QR image:', err.message));
+      const alreadyLinked = key === 'admin' && (companyCache.status === 'connected' || companyCache.registered);
+      if (!alreadyLinked) {
+        if (key === 'admin') {
+          console.log('\nScan this QR with WhatsApp → Linked Devices → Link a device\n');
+          qrcodeTerminal.generate(qr, { small: true });
+          await saveAdminQrFile(qr).catch((err) => console.error('Could not write WhatsApp QR image:', err.message));
+        }
+        current.status.qrDataUrl = await QRCode.toDataURL(qr, { width: 512, margin: 2 }).catch(() => null);
+        current.status.qrAvailable = Boolean(current.status.qrDataUrl);
+        current.status.connecting = true;
+        current.status.connected = false;
+        await persistLink(current, { status: 'connecting' });
       }
-      current.status.qrDataUrl = await QRCode.toDataURL(qr, { width: 512, margin: 2 }).catch(() => null);
-      current.status.qrAvailable = Boolean(current.status.qrDataUrl);
-      current.status.connecting = true;
-      current.status.connected = false;
-      await persistLink(current, { status: 'connecting' });
     }
 
     if (connection === 'open') {
@@ -203,7 +290,9 @@ export async function startSession(key, options = {}) {
       if (loggedOut) {
         await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
         if (key === 'admin') clearAdminQrFile();
-        await persistLink(current, { status: 'disconnected', phone: null, wa_name: null });
+        await persistLink(current, { status: 'disconnected', phone: null, wa_name: null, clear: true });
+      } else if (key === 'admin' && (companyCache.status === 'connected' || companyCache.registered)) {
+        await persistLink(current, { status: 'connected' });
       } else {
         await persistLink(current, { status: 'disconnected' });
       }
@@ -228,12 +317,20 @@ export async function startSession(key, options = {}) {
 }
 
 export async function startWhatsApp(options = {}) {
+  await hydrateCompanyCache();
   return startSession('admin', { listenMessages: options.listenMessages !== false });
 }
 
 export async function startCompanyWhatsApp() {
+  await hydrateCompanyCache();
   const current = getCompanyWhatsAppStatus(true);
-  if (current.connected || current.connecting) return current;
+  if (current.connected) {
+    if (!sessions.get('admin')?.status?.connected) {
+      startWhatsApp({ listenMessages: true }).catch((err) => console.error('Company WhatsApp restore failed:', err.message));
+    }
+    return getCompanyWhatsAppStatus(true);
+  }
+  if (current.connecting && current.qrDataUrl) return current;
   await startWhatsApp({ listenMessages: true });
   return getCompanyWhatsAppStatus(true);
 }
@@ -253,6 +350,7 @@ export async function stopCompanyWhatsApp() {
   }
   if (session) session.generation = (session.generation || 0) + 1;
   sessions.delete('admin');
+  await persistCompanyLink({ status: 'disconnected', phone: null, wa_name: null, clear: true });
   return getCompanyWhatsAppStatus(false);
 }
 

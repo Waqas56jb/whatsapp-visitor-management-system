@@ -2,14 +2,46 @@ import { useEffect, useState } from 'react';
 import { Building2, Link2, QrCode, RefreshCw, Unplug } from 'lucide-react';
 import api from '../api/client';
 
+const LINK_KEY = 'botho_company_wa';
+
+function readSaved() {
+  try {
+    const raw = sessionStorage.getItem(LINK_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function WhatsAppLink({ onToast }) {
-  const [status, setStatus] = useState({ connected: false, connecting: false, qrDataUrl: null, user: null });
+  const saved = readSaved();
+  const [status, setStatus] = useState(
+    saved?.connected
+      ? { connected: true, connecting: false, qrDataUrl: null, user: saved.user, phone: saved.phone }
+      : { connected: false, connecting: false, qrDataUrl: null, user: null }
+  );
   const [busy, setBusy] = useState(false);
+
+  function apply(data) {
+    const next = data || {};
+    if (next.connected) {
+      sessionStorage.setItem(
+        LINK_KEY,
+        JSON.stringify({ connected: true, user: next.user || null, phone: next.phone || next.user?.id || null })
+      );
+    } else if (next.connected === false && !next.connecting) {
+      sessionStorage.removeItem(LINK_KEY);
+    }
+    setStatus((prev) => {
+      if (prev.connected && next.qrDataUrl && !next.connected) return prev;
+      return next;
+    });
+  }
 
   async function load() {
     try {
       const { data } = await api.get('/host/whatsapp/status');
-      setStatus(data || {});
+      apply(data);
     } catch {
       /* keep last */
     }
@@ -17,7 +49,7 @@ export default function WhatsAppLink({ onToast }) {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 2500);
+    const t = setInterval(load, 1500);
     return () => clearInterval(t);
   }, []);
 
@@ -29,7 +61,7 @@ export default function WhatsAppLink({ onToast }) {
     setBusy(true);
     try {
       const { data } = await api.post('/host/whatsapp/connect');
-      setStatus(data || {});
+      apply(data);
       if (data?.connected) onToast?.('Company WhatsApp is already linked');
       else onToast?.('Scan this QR with the company WhatsApp number');
     } catch (err) {
@@ -46,7 +78,8 @@ export default function WhatsAppLink({ onToast }) {
     setBusy(true);
     try {
       const { data } = await api.post('/host/whatsapp/disconnect');
-      setStatus(data || {});
+      sessionStorage.removeItem(LINK_KEY);
+      setStatus(data || { connected: false });
       onToast?.('Company WhatsApp unlinked');
     } catch (err) {
       onToast?.(err.response?.data?.error || 'Could not unlink', true);
@@ -55,7 +88,7 @@ export default function WhatsAppLink({ onToast }) {
     }
   }
 
-  const linkedDigits = String(status.user?.id || '')
+  const linkedDigits = String(status.phone || status.user?.id || '')
     .split('@')[0]
     .split(':')[0]
     .replace(/\D/g, '');
@@ -74,7 +107,7 @@ export default function WhatsAppLink({ onToast }) {
           </div>
         </div>
         <span className={'ap-badge ' + (status.connected ? 'approved' : 'pending')}>
-          {status.connected ? 'Company linked' : status.connecting ? 'Waiting for company scan' : 'Not linked'}
+          {status.connected ? (status.reconnecting ? 'Linked · reconnecting' : 'Company linked') : status.connecting ? 'Waiting for company scan' : 'Not linked'}
         </span>
       </div>
       <div className="wa-link-body">
