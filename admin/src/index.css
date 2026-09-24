@@ -432,3 +432,16 @@ tbody tr:hover{background:#FBFAFF;}
   .export-row .btn{flex:1 1 100%; justify-content:center;}
   .pref-row{padding:16px;}
 }
+
+/* Tables: keep references, badges, and actions on one line */
+.badge{white-space:nowrap;}
+@media(min-width:961px){
+  td .row-actions{flex-wrap:nowrap;}
+}
+/* Compact horizontal stat cards on phones */
+@media(max-width:560px){
+  .stat-row{gap:10px; margin-bottom:18px;}
+  .stat-card{display:grid; grid-template-columns:auto 1fr; column-gap:14px; align-items:center; padding:14px 16px; border-radius:16px;}
+  .stat-card .top{grid-row:span 2; margin:0;}
+  .stat-card b{font-size:22px; line-height:1.1;}
+}

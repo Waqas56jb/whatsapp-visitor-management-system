@@ -127,7 +127,7 @@ function NavBtn({ active, icon: Icon, children, onClick, count }) {
 }
 
 export default function App() {
-  const { t, locale } = useI18n();
+  const { t, formatDate: formatLocalDate } = useI18n();
   const [loggedIn, setLoggedIn] = useState(false);
   const [view, setView] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -221,11 +221,7 @@ export default function App() {
 
   const closeModal = () => setModal(null);
 
-  function formatDate(value) {
-    if (!value) return '—';
-    const d = new Date(`${String(value).slice(0, 10)}T12:00:00`);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
-  }
+  const formatDate = (value) => formatLocalDate(value ? String(value).slice(0, 10) : value);
 
   async function run(action, success, failure) {
     try {
@@ -416,8 +412,14 @@ export default function App() {
         <div className="shell">
           <aside className={'sidebar' + (sidebarOpen ? ' open' : '')} id="sidebar">
             <div className="sb-brand">
-              <svg viewBox="0 0 40 40" fill="none">
-                <rect width="40" height="40" rx="11" fill="url(#lg1)" />
+              <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
+                <defs>
+                  <linearGradient id="sbBrandGrad" x1="0" y1="0" x2="40" y2="40">
+                    <stop offset="0%" stopColor="#8B6BFF" />
+                    <stop offset="100%" stopColor="#22E8C8" />
+                  </linearGradient>
+                </defs>
+                <rect width="40" height="40" rx="11" fill="url(#sbBrandGrad)" />
                 <path d="M12 20a8 8 0 1 1 3.2 6.4L11 28l1.4-4.2A8 8 0 0 1 12 20Z" stroke="#0D0822" strokeWidth="2" fill="none" />
                 <path d="M17 19.5l2 2 4-4.2" stroke="#0D0822" strokeWidth="2" fill="none" />
               </svg>
@@ -512,7 +514,7 @@ export default function App() {
                   </div>
                   <div className="dash-hero-meta">
                     <CalendarDays size={18} strokeWidth={1.9} />
-                    {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                    {formatLocalDate(new Date(), { weekday: true })}
                   </div>
                 </div>
                 <div className="stat-row">
@@ -756,7 +758,7 @@ export default function App() {
                         {shownVisits.length ? (
                           shownVisits.map((v) => (
                             <tr key={v.id}>
-                              <td className="cell-main" data-label={t('Reference')}>
+                              <td className="cell-main nowrap" data-label={t('Reference')}>
                                 {v.ref}
                               </td>
                               <td data-label={t('Visitor')}>
@@ -834,7 +836,7 @@ export default function App() {
                         {shownPasses.length ? (
                           shownPasses.map((v) => (
                             <tr key={v.id}>
-                              <td className="cell-main" data-label={t('Reference')}>
+                              <td className="cell-main nowrap" data-label={t('Reference')}>
                                 {v.ref}
                               </td>
                               <td data-label={t('Visitor')}>{v.visitor}</td>

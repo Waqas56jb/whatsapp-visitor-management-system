@@ -4,13 +4,11 @@ import api from '../api/client';
 import { useI18n } from '../i18n';
 
 export default function Conversations() {
-  const { t, locale } = useI18n();
+  const { t, formatDateTime: formatWhen } = useI18n();
   const [threads, setThreads] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  const formatWhen = (value) => (value ? new Date(value).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
   useEffect(() => {
     let cancelled = false;

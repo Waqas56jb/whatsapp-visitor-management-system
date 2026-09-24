@@ -96,14 +96,8 @@ function EmptyState({ icon: Icon, children }) {
 }
 
 function useFormatters() {
-  const { locale } = useI18n();
-  return {
-    date: (value) => {
-      if (!value) return '—';
-      const d = new Date(`${String(value).slice(0, 10)}T12:00:00`);
-      return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
-    },
-  };
+  const { formatDate } = useI18n();
+  return { date: (value) => formatDate(value ? String(value).slice(0, 10) : value) };
 }
 
 function VisitMeta({ v }) {
@@ -144,7 +138,7 @@ function ReqCard({ v, onDecide, busy }) {
 }
 
 export default function Portal({ on, currentUser, onBackToSite, onToast }) {
-  const { t, locale } = useI18n();
+  const { t, formatDate } = useI18n();
   const fmt = useFormatters();
   const [view, setView] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -244,8 +238,14 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
       <div className="ap-shell">
         <aside className={'ap-sidebar' + (sidebarOpen ? ' open' : '')} id="apSidebar">
           <div className="ap-brand">
-            <svg viewBox="0 0 40 40" fill="none">
-              <rect width="40" height="40" rx="11" fill="url(#lg2)" />
+            <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
+              <defs>
+                <linearGradient id="apBrandGrad" x1="0" y1="0" x2="40" y2="40">
+                  <stop offset="0%" stopColor="#22E8C8" />
+                  <stop offset="100%" stopColor="#8B6BFF" />
+                </linearGradient>
+              </defs>
+              <rect width="40" height="40" rx="11" fill="url(#apBrandGrad)" />
               <path d="M12 20a8 8 0 1 1 3.2 6.4L11 28l1.4-4.2A8 8 0 0 1 12 20Z" stroke="#0D0822" strokeWidth="2" fill="none" />
               <path d="M17 19.5l2 2 4-4.2" stroke="#0D0822" strokeWidth="2" fill="none" />
             </svg>
@@ -321,7 +321,7 @@ export default function Portal({ on, currentUser, onBackToSite, onToast }) {
                 </div>
                 <div className="dash-hero-meta">
                   <CalendarDays size={18} strokeWidth={1.9} />
-                  {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                  {formatDate(new Date(), { weekday: true })}
                 </div>
               </div>
               <div className="ap-stat-row">

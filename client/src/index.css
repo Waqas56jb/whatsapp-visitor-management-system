@@ -645,3 +645,12 @@
   @media(max-width:420px){
     .ap-topbar-actions{width:100%; justify-content:space-between;}
   }
+
+  /* Compact horizontal stat cards on phones */
+  .ap-badge{white-space:nowrap;}
+  @media(max-width:800px){
+    .ap-stat-row{gap:10px;}
+    .ap-stat-card{display:grid; grid-template-columns:auto 1fr; column-gap:14px; align-items:center; padding:14px 16px; border-radius:16px;}
+    .ap-stat-card .top{grid-row:span 2; margin:0;}
+    .ap-stat-card b{font-size:22px; line-height:1.1;}
+  }

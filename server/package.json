@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "test": "node --test test/*.test.js",
     "migrate": "node migrations/migrate.js",
     "seed": "node migrations/seed.js",
     "whatsapp:link": "node src/whatsapp/testConnection.js"
