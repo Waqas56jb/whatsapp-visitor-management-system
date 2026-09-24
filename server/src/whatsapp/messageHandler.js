@@ -1,5 +1,4 @@
-import { ConversationLog, Host, Visit } from '../models/index.js';
-import { decideVisitByRef } from '../services/visits.js';
+import { ConversationLog, Host } from '../models/index.js';
 import { handleIncomingMessage } from './conversationEngine.js';
 import { handleVisitorWithAgent } from './visitorAgent.js';
 import { sendText } from './sendMessage.js';
@@ -27,37 +26,15 @@ async function handleHostCommand(from, text, ctx, fromMe = false) {
   const host = ctx.hostId ? await Host.findById(ctx.hostId) : await Host.findByPhone(from);
   if (!host) return false;
 
-  let ref = match ? match[2].toUpperCase() : null;
-  const decision = (match ? match[1] : raw.match(SHORT_DECISION_RE)[2]).toLowerCase() === 'approve'
-    ? 'approved'
-    : 'rejected';
-  if (!ref) {
-    const pending = await Visit.list({ status: 'pending', hostId: host.id, limit: 1 });
-    ref = pending?.[0]?.ref_number || null;
-    if (!ref) {
-      await sendText(from, 'There is no pending visit for you to decide right now.', { onlyTarget: true });
-      return true;
-    }
-  }
-
-  const result = await decideVisitByRef({
-    ref,
-    decision,
-    actorPhone: from,
-    actorHostId: host.id,
-    notifyHostPhone: fromMe ? null : from,
-  });
-  if (result.error) {
-    await sendText(from, result.error, { onlyTarget: true });
-    return true;
-  }
-  if (result.alreadyDecided) {
-    await sendText(
-      from,
-      `This request was already ${result.visit.status}.\nReference: ${result.visit.ref_number}`,
-      { onlyTarget: true }
-    );
-  }
+  await sendText(
+    from,
+    [
+      'WhatsApp approve/reject is not available yet.',
+      'Please open the Client Portal → Visit requests to approve or reject this visit.',
+      'This WhatsApp action will be added after project lock.',
+    ].join('\n'),
+    { onlyTarget: true }
+  );
   return true;
 }
 

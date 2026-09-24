@@ -148,7 +148,7 @@ async function bookFromSlots(slots, ctx) {
   });
   const notify = visit.hostNotify || {};
   const hostNote = notify.sent
-    ? `${visit.host_name} has been notified on WhatsApp. Reply will come here after they approve or reject.`
+    ? `${visit.host_name} has been notified on WhatsApp. They will approve or reject this from the Client Portal, and you will be updated here.`
     : notify.reason === 'same_phone'
       ? `${visit.host_name} will review this from the staff panel because the host number matches this chat.`
       : notify.reason === 'no_phone'
@@ -290,7 +290,7 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
       inbound,
       history,
       body,
-      reply: 'I cannot approve or reject visits from this chat. The host will reply APPROVE or REJECT on their own WhatsApp, or staff can decide from the panel.',
+      reply: 'I cannot approve or reject visits from this chat. The host will review this from the Client Portal, and you will be notified here once they decide.',
       slots,
       lastRef: state.lastRef,
     });
@@ -370,7 +370,7 @@ export async function handleVisitorWithAgent({ from, text, ctx, replyJid = null 
         'Never invent a visitor name, company, purpose, date, or time. If a field is missing, ask for it. Do not reuse the previous visitor.',
         'A visitor and a host may share the same name. That is valid. Do not assume the visitor is booking themselves.',
         'Do not invent hosts, departments, prices, or policies. Match hosts only with lookup_host or the saved host list.',
-        'Never approve or reject a visit. Only the named host on WhatsApp or staff on the panel can do that.',
+        'Never approve or reject a visit. Only staff on the Client Portal can do that for now.',
         'When every field is present and the visitor confirms, call book_visit using only the collected fields. Then confirm the reference in plain text.',
         `Collected fields so far:\n${summaryLines(slots)}`,
         missing ? `Next missing field: ${missing}. Ask only for that.` : 'All booking fields are present. Confirm once, then book.',

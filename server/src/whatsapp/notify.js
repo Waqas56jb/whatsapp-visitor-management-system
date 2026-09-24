@@ -43,7 +43,8 @@ export async function notifyHostNewVisit(visit) {
       `Date: ${formatDateNice(visit.visit_date)} at ${visit.visit_time}`,
       `Reference: ${visit.ref_number}`,
       '',
-      `Reply APPROVE ${visit.ref_number} or REJECT ${visit.ref_number}`,
+      'Please open the Client Portal to approve or reject this visit request.',
+      'WhatsApp approve/reject is not available yet and will be added after project lock.',
     ].join('\n')
   );
   if (!sent) console.error(`Host WhatsApp notify failed for ${visit.host_name} ${phone} ${visit.ref_number}`);
