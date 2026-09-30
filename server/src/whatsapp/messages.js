@@ -49,6 +49,10 @@ const CATALOG = {
     'host.none.again': "That doesn't match anyone on the list. Please reply with a number, or type the name exactly as shown:",
     'host.many': 'More than one host matches "{query}". Please reply with the number of the person you are visiting:',
     'host.pick': 'Please choose the host you are visiting by replying with the number:',
+    'host.confirm': 'Did you mean {name}{dept}? Reply yes or no.',
+    'host.paused':
+      'I could not match that to a host on the list, so I have paused this request. Send "new booking" whenever you want to start again.',
+    'resume.ask': 'You have a visit request in progress. Reply 1 to continue it, or 2 to start a new one.',
     'host.directoryEmpty':
       "Our host directory has not been set up yet, so I can't complete a booking on WhatsApp right now. Please contact reception.",
     'label.name': 'Name',
@@ -145,6 +149,10 @@ const CATALOG = {
     'host.none.again': 'Seo ga se tsamaisane le ope mo lenaaneng. Tsweetswee araba ka nomoro, kgotsa kwala leina jaaka le kwadilwe:',
     'host.many': 'Go na le batho ba feta bongwe ba ba tsamaisanang le "{query}". Tsweetswee araba ka nomoro ya motho yo o mo etelang:',
     'host.pick': 'Tsweetswee tlhopha motho yo o mo etelang, o arabe ka nomoro:',
+    'host.confirm': 'A o raya {name}{dept}? Araba ee kgotsa nnyaa.',
+    'host.paused':
+      'Ga ke a kgona go bona motho yoo mo lenaaneng, ka jalo ke emisitse kopo e. Romela "kopo e ntsha" fa o batla go simolola gape.',
+    'resume.ask': 'O na le kopo ya ketelo e e sa ntseng e tswelela. Araba 1 go e tswelela, kgotsa 2 go simolola e ntšhwa.',
     'host.directoryEmpty':
       'Lenaane la batho ba ba etelwang ga le ise le baakanngwe, ka jalo ga ke kgone go wetsa kopo ka WhatsApp jaanong. Tsweetswee ikgolaganye le kamogelo.',
     'label.name': 'Maina',

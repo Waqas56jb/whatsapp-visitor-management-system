@@ -280,13 +280,34 @@ export function extractFields(input, { today = todayStamp(), orgName = '', start
   return out;
 }
 
+// Everyday words that show a short reply is a sentence, not someone's name ("no need to worry").
+const SENTENCE_WORDS = new Set([
+  'it', 'is', 'are', 'was', 'be', 'do', 'does', 'did', 'done', 'can', 'could', 'should', 'need', 'make', 'get', 'go',
+  'come', 'now', 'later', 'soon', 'ready', 'worry', 'sleep', 'you', 'me', 'we', 'they', 'he', 'she', 'this', 'that',
+  'what', 'ok', 'okay', 'sure', 'fine', 'yes', 'no', 'not', "don't", 'dont', 'thanks', 'please', 'there', 'here',
+  'just', 'brother', 'bro', 'sister', 'friend', 'the', 'my', 'your', 'our', 'to', 'of', 'in', 'on', 'at', 'for',
+  'with', 'before', 'after', 'if', 'so', 'but', 'or',
+]);
+
+function wordCount(text) {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).length;
+}
+
+const NAME_LABEL = /^(?:my (?:full )?names? (?:is|are)|i am|i'm|it's|this is|name:?|leina la me ke|maina a me ke|ke nna)\s+/i;
+const HOST_MARKER =
+  /^(?:i (?:want|would like) to (?:visit|see|meet)|i'm visiting|i am visiting|visiting|to see|to visit|visit|see|meet|host(?: is|:)?|ke batla go bona|ke etela)\s+/i;
+
 // Interprets a short reply as the answer to the field we just asked for.
 export function answerForField(field, input, { today = todayStamp() } = {}) {
   const raw = stripGreeting(prep(input));
   if (!raw || isYes(raw) || isNo(raw) || isGreetingOnly(raw) || looksLikeQuestion(raw) || isBookingWordsOnly(raw)) return null;
   if (field === 'name') {
-    const stripped = raw.replace(/^(?:my (?:full )?names? (?:is|are)|i am|i'm|it's|this is|name:?|leina la me ke|maina a me ke|ke nna)\s+/i, '');
-    if (!/^[A-Za-z][A-Za-z'.\-\s]{0,60}$/.test(stripped) || stripped.split(/\s+/).length > 5) return null;
+    // "My name is …" may be up to 5 words; a bare reply must look like a name: 1–4 words, letters only.
+    const labelled = NAME_LABEL.test(raw);
+    const stripped = raw.replace(NAME_LABEL, '');
+    const words = stripped.split(/\s+/).filter(Boolean);
+    if (!/^[A-Za-z][A-Za-z'.\-\s]{0,60}$/.test(stripped) || words.length > (labelled ? 5 : 4)) return null;
+    if (!labelled && words.some((w) => SENTENCE_WORDS.has(w.toLowerCase()))) return null;
     return cleanName(stripped) || null;
   }
   if (field === 'company') {
@@ -303,10 +324,10 @@ export function answerForField(field, input, { today = todayStamp() } = {}) {
   if (field === 'date') return extractDate(raw, today);
   if (field === 'time') return extractTime(raw, { bare: true });
   if (field === 'host') {
-    return cleanValue(
-      raw.replace(/^(?:i (?:want|would like) to (?:visit|see|meet)|i'm visiting|i am visiting|visiting|to see|host(?: is|:)?|ke batla go bona|ke etela)\s+/i, ''),
-      60
-    ) || null;
+    // A host name is a short string. A long sentence without "visit X" / "to see X" is not one.
+    const marked = HOST_MARKER.test(raw);
+    if (!marked && wordCount(raw) > 5) return null;
+    return cleanValue(raw.replace(HOST_MARKER, ''), 60) || null;
   }
   return null;
 }

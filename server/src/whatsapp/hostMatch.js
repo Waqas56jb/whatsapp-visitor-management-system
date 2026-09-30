@@ -79,26 +79,30 @@ function scoreHost(qTokens, host) {
   return 0;
 }
 
-// Returns the best-scoring hosts. One result = a confident match; several = the visitor must choose.
-export function matchHosts(query, hosts = []) {
+// Below this score a match came only from a partial or fuzzy hit and must be confirmed by the visitor.
+export const CONFIDENT_SCORE = 60;
+
+// Returns the best-scoring hosts and their score. One host = a single match; several = the visitor must choose.
+export function bestHostMatches(query, hosts = []) {
   const qTokens = queryTokens(query);
-  if (!qTokens.length) return [];
+  if (!qTokens.length) return { hosts: [], score: 0 };
   const scored = hosts
     .filter((h) => h && h.name && (h.status === undefined || h.status === 'active'))
     .map((host) => ({ host, score: scoreHost(qTokens, host) }))
     .filter((item) => item.score > 0);
-  if (!scored.length) return [];
+  if (!scored.length) return { hosts: [], score: 0 };
   const top = Math.max(...scored.map((item) => item.score));
-  return scored.filter((item) => item.score === top).map((item) => item.host);
+  return { hosts: scored.filter((item) => item.score === top).map((item) => item.host), score: top };
 }
 
-// Picks an option by number ("2", "no. 2", "option 2") or by matching the text against the offered options.
-export function pickOption(text, options = []) {
-  const raw = String(text || '').trim();
-  const num = raw.match(/^(?:no\.?|number|option|nomoro)?\s*(\d{1,2})[.)]?$/i);
-  if (num) {
-    const option = options[Number(num[1]) - 1];
-    return option ? [option] : [];
-  }
-  return matchHosts(raw, options);
+export function matchHosts(query, hosts = []) {
+  return bestHostMatches(query, hosts).hosts;
+}
+
+// Picks an option by its list number ("2", "no. 2", "option 2"). Returns null when the reply is not a number.
+export function pickNumber(text, options = []) {
+  const num = String(text || '').trim().match(/^(?:no\.?|number|option|nomoro)?\s*(\d{1,2})[.)]?$/i);
+  if (!num) return null;
+  const option = options[Number(num[1]) - 1];
+  return option ? [option] : [];
 }

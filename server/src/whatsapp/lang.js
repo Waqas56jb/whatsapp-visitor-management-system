@@ -84,13 +84,19 @@ export function isStatusRequest(text) {
   );
 }
 
+// A question or request about a host's availability ("what slots are free", "available times for Friday").
+// The word "slot" inside an unrelated sentence ("move my 3pm slot to 4pm") is not one.
 export function isSlotsQuery(text) {
   const value = String(text || '').trim().toLowerCase();
+  const asks =
+    value.includes('?') ||
+    /^(what|which|when|any|is there|are there|is|are|do you have|does|do|can|could|show|check|list|see|tell|give|send)\b/.test(value) ||
+    /\b(show me|tell me|let me know|can you|could you|please (show|check|send|list|tell))\b/.test(value);
   return (
-    /\b(free|available|availability|open|empty|booked|taken)\s+(slots?|times?|timings?)\b/.test(value) ||
-    /\bslots?\b/.test(value) ||
+    /\b(free|available|open|empty)\s+(slots?|times?|timings?)\b/.test(value) ||
+    /\bavailability\b/.test(value) ||
+    (asks && /\b(slots?|times?|timings?)\b/.test(value) && /\b(free|available|booked|taken)\b/.test(value)) ||
     /\bwhen is\b.+\b(free|available)\b/.test(value) ||
-    /\b(what|which) times?\b.+\b(free|available|open)\b/.test(value) ||
     /\bdinako\b.+\b(gololesegileng|bulegileng)\b/.test(value)
   );
 }

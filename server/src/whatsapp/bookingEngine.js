@@ -3,7 +3,7 @@
 import dayjs from 'dayjs';
 import { extractDate, extractTime, todayStamp } from '../utils/dateParse.js';
 import { conflictAt, freeSlots, hostBookings, nearestFree, officeHours, timeProblem, toMinutes, SLOT_MINUTES } from './availability.js';
-import { departmentOf, matchHosts, pickOption } from './hostMatch.js';
+import { bestHostMatches, CONFIDENT_SCORE, departmentOf, matchHosts, pickNumber } from './hostMatch.js';
 import {
   detectLanguage,
   isCancel,
@@ -20,10 +20,12 @@ import {
   normalizeLang,
 } from './lang.js';
 import { formatVisitDate, formatVisitTime, hostOptionLines, statusLabel, summaryText, t } from './messages.js';
-import { answerForField, emptySlots, extractFields, isBookingWordsOnly, missingField } from './slotExtract.js';
+import { answerForField, emptySlots, extractFields, missingField } from './slotExtract.js';
 
 const STATE_VERSION = 2;
 const MAX_OPTIONS = 20;
+// Replies in choose_host that do not pick a listed host before the request is paused.
+const MAX_HOST_MISSES = 2;
 const REF_RE = /\bVMS-\d{4}-\d{3,}\b/i;
 const THANKS_RE = /^(thanks|thank you|thank u|thx|ty|ok thanks|okay thanks|cool|great|noted|alright|perfect|ke a leboga|re a leboga|ke itumetse|ke leboga)[.! ]*$/i;
 const PATTERNY = /\b(from|visit|visiting|see|meet|my name|i am|i'm|im|want to|would like|ke nna|ke tswa)\b/i;
@@ -38,6 +40,8 @@ export function freshState(prev = {}) {
     asked: null,
     retries: 0,
     hostOptions: [],
+    hostSuggestion: null,
+    resumeStage: null,
     cancelRef: null,
     cancelOptions: [],
     lastRef: prev.lastRef || null,
@@ -47,7 +51,11 @@ export function freshState(prev = {}) {
   };
 }
 
-const STAGES = ['idle', 'collecting', 'choose_host', 'confirm', 'confirm_cancel', 'choose_cancel', 'reschedule_pick', 'reschedule_time'];
+const STAGES = [
+  'idle', 'collecting', 'choose_host', 'confirm_host', 'confirm', 'resume',
+  'confirm_cancel', 'choose_cancel', 'reschedule_pick', 'reschedule_time',
+];
+const DRAFT_STAGES = ['collecting', 'choose_host', 'confirm_host', 'confirm'];
 
 // Accepts whatever is stored in the DB. Anything from the old engine starts a clean booking.
 export function loadState(data) {
@@ -61,6 +69,8 @@ export function loadState(data) {
     asked: data.asked || null,
     retries: Number(data.retries) || 0,
     hostOptions: Array.isArray(data.hostOptions) ? data.hostOptions : [],
+    hostSuggestion: data.hostSuggestion && data.hostSuggestion.id ? data.hostSuggestion : null,
+    resumeStage: DRAFT_STAGES.includes(data.resumeStage) ? data.resumeStage : null,
     cancelRef: data.cancelRef || null,
     cancelOptions: Array.isArray(data.cancelOptions) ? data.cancelOptions : [],
     rescheduleRef: data.rescheduleRef || null,
@@ -142,6 +152,7 @@ function setHost(state, host) {
   state.slots.hostName = host.name;
   state.slots.hostDept = departmentOf(host);
   state.hostOptions = [];
+  state.hostSuggestion = null;
 }
 
 function join(...parts) {
@@ -160,6 +171,8 @@ function activeHosts(hosts) {
 export function currentPrompt(state) {
   if (state.stage === 'confirm') return t(state.lang, 'confirm.reminder');
   if (state.stage === 'choose_host') return listPrompt(state, 'host.pick');
+  if (state.stage === 'confirm_host') return hostConfirmPrompt(state);
+  if (state.stage === 'resume') return t(state.lang, 'resume.ask');
   if (state.stage === 'collecting') {
     const field = missingField(state.slots);
     if (field) return t(state.lang, `ask.${field}`);
@@ -173,22 +186,39 @@ function openHostList(state, hosts, query) {
     state.stage = 'idle';
     return t(state.lang, 'host.directoryEmpty');
   }
-  state.stage = 'choose_host';
-  state.asked = 'host';
-  state.hostOptions = all;
+  enterChooseHost(state, all);
   return listPrompt(state, 'host.none', { query });
 }
 
+// Every entry into choose_host starts a fresh miss count.
+function enterChooseHost(state, options) {
+  state.stage = 'choose_host';
+  state.asked = 'host';
+  state.hostOptions = options;
+  state.retries = 0;
+}
+
+function hostConfirmPrompt(state) {
+  const h = state.hostSuggestion || {};
+  return t(state.lang, 'host.confirm', { name: h.name, dept: h.department ? ` (${h.department})` : '' });
+}
+
 function resolveHost(state, hosts, query, { explicit }) {
-  const matches = matchHosts(query, activeHosts(hosts));
+  const { hosts: matches, score } = bestHostMatches(query, activeHosts(hosts));
   if (matches.length === 1) {
+    // A partial or fuzzy hit is never accepted silently: the visitor confirms it first.
+    if (score < CONFIDENT_SCORE) {
+      state.stage = 'confirm_host';
+      state.asked = 'host';
+      state.hostSuggestion = compactHost(matches[0]);
+      state.retries = 0;
+      return hostConfirmPrompt(state);
+    }
     setHost(state, matches[0]);
     return null;
   }
   if (matches.length > 1) {
-    state.stage = 'choose_host';
-    state.asked = 'host';
-    state.hostOptions = matches.slice(0, MAX_OPTIONS).map(compactHost);
+    enterChooseHost(state, matches.slice(0, MAX_OPTIONS).map(compactHost));
     return listPrompt(state, 'host.many', { query });
   }
   return explicit ? openHostList(state, hosts, query) : null;
@@ -325,9 +355,13 @@ function handleCollect(state, raw, ctx) {
     if (asked === field) {
       state.retries += 1;
       if (field === 'host') {
+        // The reply was not a usable host name (booking words, a long sentence…): show the list
+        // without quoting the text back as if it were a name.
         const reply = openHostList(state, ctx.hosts, raw);
-        return { reply: isBookingWordsOnly(raw) && state.stage === 'choose_host' ? listPrompt(state, 'host.pick') : reply };
+        return { reply: state.stage === 'choose_host' ? listPrompt(state, 'host.pick') : reply };
       }
+      // Nothing collected yet and the reply is not a name: ask again for the details in one go.
+      if (field === 'name' && !Object.values(state.slots).some(Boolean)) return { reply: t(state.lang, 'faq.startBooking') };
       return { reply: t(state.lang, `retry.${field}`) };
     }
     state.asked = field;
@@ -338,25 +372,94 @@ function handleCollect(state, raw, ctx) {
   return { reply: advance(state, ctx) };
 }
 
+// Only the hosts already listed to the visitor can be chosen here: by number, or by a name that
+// matches one of them. The full directory is never searched again from this reply.
+function pickCandidate(state, raw, ctx) {
+  const byNumber = pickNumber(raw, state.hostOptions);
+  if (byNumber) return byNumber;
+  const query = answerForField('host', raw, { today: ctx.today });
+  if (!query) return [];
+  const { hosts, score } = bestHostMatches(query, state.hostOptions);
+  // A name or department word must actually appear; fuzzy look-alikes do not pick from the list.
+  return score >= 50 ? hosts : [];
+}
+
 function handleChooseHost(state, raw, ctx) {
-  let picked = pickOption(raw, state.hostOptions);
-  if (!picked.length) {
-    const query = answerForField('host', raw, { today: ctx.today }) || raw;
-    picked = matchHosts(query, activeHosts(ctx.hosts));
-  }
+  const picked = pickCandidate(state, raw, ctx);
   if (picked.length === 1) {
     setHost(state, picked[0]);
     return { reply: advance(state, ctx) };
   }
-  if (picked.length > 1) {
-    state.hostOptions = picked.slice(0, MAX_OPTIONS).map(compactHost);
+  if (picked.length > 1 && picked.length < state.hostOptions.length) {
+    state.hostOptions = picked;
     return { reply: listPrompt(state, 'host.many', { query: raw }) };
   }
-  if (looksLikeQuestion(raw)) {
+
+  state.retries += 1;
+  const question = looksLikeQuestion(raw);
+  if (state.retries >= MAX_HOST_MISSES) {
+    // Stop instead of sending the list a third time.
+    resetToIdle(state);
+    const paused = t(state.lang, 'host.paused');
+    return question ? { reply: '', actions: [{ type: 'faq', question: raw, followUp: paused }] } : { reply: paused };
+  }
+  if (question) {
     return { reply: '', actions: [{ type: 'faq', question: raw, followUp: listPrompt(state, 'host.pick') }] };
   }
-  state.retries += 1;
   return { reply: listPrompt(state, 'host.none.again') };
+}
+
+// "Did you mean Tshepo Molefe (Finance)?" after a partial or fuzzy host match.
+function handleConfirmHost(state, raw, ctx) {
+  const suggestion = state.hostSuggestion;
+  const backToHostQuestion = () => {
+    state.hostSuggestion = null;
+    state.stage = 'collecting';
+    state.asked = 'host';
+  };
+  if (!suggestion) {
+    backToHostQuestion();
+    return handleCollect(state, raw, ctx);
+  }
+  // "yes" alone, or "yes tomorrow at 4pm": accept the host and read the rest as the next answer.
+  const lead = raw.match(/^(yes|yeah|yep|yup|ee|eya)\b[\s,.!]*(.*)$/i);
+  if (isYes(raw) || lead) {
+    setHost(state, suggestion);
+    const rest = isYes(raw) ? '' : lead[2].trim();
+    if (!rest) return { reply: advance(state, ctx) };
+    state.stage = 'collecting';
+    state.asked = missingField(state.slots);
+    return handleCollect(state, rest, ctx);
+  }
+  if (isNo(raw)) {
+    backToHostQuestion();
+    return { reply: t(state.lang, 'ask.host') };
+  }
+  if (looksLikeQuestion(raw)) {
+    return { reply: '', actions: [{ type: 'faq', question: raw, followUp: hostConfirmPrompt(state) }] };
+  }
+  // Anything else is read as a new answer to the host question.
+  backToHostQuestion();
+  return handleCollect(state, raw, ctx);
+}
+
+// Reply to "continue this request or start a new one?" after a greeting mid-booking.
+// Returns null when the reply is neither, so it is handled as a normal message in the restored step.
+function handleResume(state, raw, ctx) {
+  const value = raw.trim().toLowerCase();
+  const previous = state.resumeStage || 'collecting';
+  state.resumeStage = null;
+  if (/^(1|continue|carry on|keep going|tswelela|e tswelele)[.!]*$/.test(value) || isYes(raw)) {
+    state.stage = previous;
+    if (previous === 'confirm') return { reply: t(state.lang, 'confirm', { summary: summaryText(state.slots, state.lang) }) };
+    return { reply: currentPrompt(state) || advance(state, ctx) };
+  }
+  if (/^(2|new|new one|start new|start a new one|a new one|e ntsha|e ntšhwa)[.!]*$/.test(value) || isNo(raw)) {
+    Object.assign(state, freshState(state), { stage: 'collecting', welcomed: true, lang: state.lang, asked: 'name' });
+    return { reply: t(state.lang, 'welcome') };
+  }
+  state.stage = previous;
+  return null;
 }
 
 const CORRECTION_FIELDS = {
@@ -406,7 +509,7 @@ function handleConfirm(state, raw, ctx) {
     state.slots.hostId = null;
     const reply = resolveHost(state, ctx.hosts, hostQuery, { explicit: true });
     if (reply) {
-      if (state.stage !== 'choose_host') Object.assign(state.slots, previous);
+      if (!['choose_host', 'confirm_host'].includes(state.stage)) Object.assign(state.slots, previous);
       return { reply };
     }
     changed = true;
@@ -419,7 +522,7 @@ function handleConfirm(state, raw, ctx) {
 }
 
 function draftStarted(state) {
-  return ['collecting', 'choose_host', 'confirm'].includes(state.stage) && Object.values(state.slots).some(Boolean);
+  return [...DRAFT_STAGES, 'resume'].includes(state.stage) && Object.values(state.slots).some(Boolean);
 }
 
 function resetToIdle(state) {
@@ -690,6 +793,15 @@ export function runTurn(
     return result({ reply: join(t(state.lang, 'textOnly'), currentPrompt(state) || t(state.lang, 'faq.startBooking')) });
   }
 
+  // A greeting in the middle of a booking never wipes it: ask whether to continue or start again.
+  if (isGreetingOnly(raw) && draftStarted(state)) {
+    if (state.stage !== 'resume') {
+      state.resumeStage = state.stage;
+      state.stage = 'resume';
+    }
+    return result({ reply: t(state.lang, 'resume.ask') });
+  }
+
   // A returning visitor is greeted by name with their upcoming bookings, not the official welcome.
   if (isGreetingOnly(raw) && ctx.visitorName) {
     resetToIdle(state);
@@ -704,11 +816,19 @@ export function runTurn(
     return result({ reply: join(t(state.lang, 'welcome'), note) });
   }
 
+  if (state.stage === 'resume' && !isCancel(raw)) {
+    const resumed = handleResume(state, raw, ctx);
+    if (resumed) return result(resumed);
+  }
   if (state.stage === 'confirm_cancel' && !isCancel(raw)) return result(handleConfirmCancel(state, raw, ctx));
   if (state.stage === 'reschedule_pick' && !isCancel(raw)) return result(handleReschedulePick(state, raw, ctx));
   if (state.stage === 'reschedule_time' && !isCancel(raw) && !isStatusRequest(raw)) return result(handleRescheduleTime(state, raw, ctx));
   if (state.stage === 'choose_cancel' && !isCancel(raw)) return result(handleChooseCancel(state, raw, ctx));
   if (isCancel(raw)) return result(handleCancelIntent(state, raw, ctx));
+  // While choosing or confirming a host, every other reply is an answer to that step
+  // (so the host list is never re-sent by an unrelated intent).
+  if (state.stage === 'choose_host') return result(handleChooseHost(state, raw, ctx));
+  if (state.stage === 'confirm_host') return result(handleConfirmHost(state, raw, ctx));
   if (isStatusRequest(raw)) return result(handleStatus(state, ctx));
   if (isSlotsQuery(raw)) return result(handleSlots(state, raw, ctx));
   if (isReschedule(raw) && !draftStarted(state)) return result(handleRescheduleIntent(state, raw, ctx));
@@ -730,7 +850,6 @@ export function runTurn(
   }
 
   if (state.stage === 'confirm') return result(handleConfirm(state, raw, ctx));
-  if (state.stage === 'choose_host') return result(handleChooseHost(state, raw, ctx));
   return result(handleCollect(state, raw, ctx));
 }
 
@@ -800,9 +919,7 @@ export function afterBooking(prevState, outcome, { hosts = [], bookings = [], to
       Object.assign(state, freshState(state), { welcomed: true, lang: state.lang });
       return { state, reply: t(state.lang, 'host.directoryEmpty') };
     }
-    state.stage = 'choose_host';
-    state.asked = 'host';
-    state.hostOptions = all;
+    enterChooseHost(state, all);
     return { state, reply: listPrompt(state, 'book.hostGone') };
   }
   return { state, reply: t(state.lang, 'book.failed') };
