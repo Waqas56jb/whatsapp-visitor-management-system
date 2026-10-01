@@ -60,18 +60,6 @@ export function mapVisit(row) {
   };
 }
 
-export function mapAccount(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    name: row.name,
-    username: row.username,
-    role: row.role,
-    created: formatDateNice(row.created_at),
-    status: row.status,
-  };
-}
-
 export function mapAudit(row) {
   if (!row) return null;
   return {

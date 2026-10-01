@@ -2,6 +2,8 @@
 //
 //   SEED_ADMIN_PASSWORD='…' npm run seed          (or run it and type the password when asked)
 //
+// Creates one super_admin login and demo hosts, visitors and visits.
+//
 // Refuses to run when NODE_ENV=production or when an admin already exists, so it can never
 // overwrite or add to a live system. No password is stored in this file or printed.
 import crypto from 'crypto';
@@ -43,24 +45,10 @@ async function seed() {
   if (adminPassword.length < MIN_PASSWORD) {
     throw new Error(`Set SEED_ADMIN_PASSWORD (or type a password) of at least ${MIN_PASSWORD} characters.`);
   }
-  await query(`INSERT INTO ${T.admins} (username, password_hash, name) VALUES ($1, $2, 'Admin')`, [
+  await query(`INSERT INTO ${T.admins} (username, password_hash, name, role, status) VALUES ($1, $2, 'Admin', 'super_admin', 'active')`, [
     adminUsername,
     await bcrypt.hash(adminPassword, 10),
   ]);
-
-  // A demo host login is only created when a password for it is supplied.
-  let account = null;
-  const hostPassword = process.env.SEED_HOST_PASSWORD || '';
-  if (hostPassword) {
-    if (hostPassword.length < MIN_PASSWORD) throw new Error(`SEED_HOST_PASSWORD must be at least ${MIN_PASSWORD} characters.`);
-    account = await queryOne(
-      `INSERT INTO ${T.accounts} (name, username, password_hash, role, status)
-       VALUES ('Boikarabelo Ramaretlwa', 'boikarabelo', $1, 'Host', 'active')
-       ON CONFLICT (username) DO NOTHING
-       RETURNING *`,
-      [await bcrypt.hash(hostPassword, 10)]
-    );
-  }
 
   // Demo hosts have no phone number, so no WhatsApp notification is ever sent to a stranger.
   async function ensureHost(name, department, accountId = null) {
@@ -73,7 +61,7 @@ async function seed() {
     );
   }
 
-  const h1 = await ensureHost('Boikarabelo Ramaretlwa', 'Technology Planning', account?.id || null);
+  const h1 = await ensureHost('Boikarabelo Ramaretlwa', 'Technology Planning');
   const h2 = await ensureHost('Naledi Kgosi', 'Human Resources');
   const h3 = await ensureHost('Tshepo Molefe', 'Finance');
 
@@ -120,7 +108,7 @@ async function seed() {
     await query(`INSERT INTO ${T.audit} (actor, action, details) VALUES ('Admin', 'System initialized', 'Demo data seeded')`);
   }
 
-  console.log(`Seed complete. Admin username: ${adminUsername}${account ? ' | Demo host username: boikarabelo' : ''}`);
+  console.log(`Seed complete. Super admin username: ${adminUsername}`);
 }
 
 try {

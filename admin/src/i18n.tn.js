@@ -448,4 +448,76 @@ export const TN = {
   'Set a new password for {name} ({username}). They will be signed out and must use the new password.':
     'Tlhoma lefoko la sephiri le lesha la {name} ({username}). Ba tla ntshiwa, mme ba tshwanetse go dirisa lefoko le lesha.',
   'At least 10 characters': 'Bonnye ditlhaka di le 10',
+
+  // Roles and sub-admins
+  'Super admin': 'Motsamaisi mogolo',
+  Reception: 'Kamogelo',
+  Administration: 'Tsamaiso',
+  'Sub-admins': 'Batsamaisi',
+  'Add sub-admin': 'Oketsa motsamaisi',
+  'Who can sign in to this panel, and what they can do': 'Ke mang yo o ka tsenang mo phaneleng e, le se a ka se dirang',
+  'Super admins manage everything. Admins run daily operations. Reception uses the gate only.':
+    'Batsamaisi bagolo ba laola sengwe le sengwe. Batsamaisi ba dira tiro ya letsatsi le letsatsi. Kamogelo e dirisa kgoro fela.',
+  'Sub-admin created': 'Motsamaisi o okeditswe',
+  'Could not create this sub-admin': 'Ga re a kgona go oketsa motsamaisi yo',
+  'Sub-admin blocked': 'Motsamaisi o thibetswe',
+  'Could not block this sub-admin': 'Ga re a kgona go thibela motsamaisi yo',
+  'Sub-admin unblocked': 'Motsamaisi o buletswe',
+  'Could not unblock this sub-admin': 'Ga re a kgona go bulela motsamaisi yo',
+  'Role updated': 'Seabe se fetotswe',
+  'Could not change the role': 'Ga re a kgona go fetola seabe',
+  'Delete sub-admin {name}? This cannot be undone.': 'Phimola motsamaisi {name}? Se ga se kgone go busediwa morago.',
+  'Sub-admin deleted': 'Motsamaisi o phimotswe',
+  'Could not delete this sub-admin': 'Ga re a kgona go phimola motsamaisi yo',
+  'No sub-admins yet': 'Ga go ise go nne le batsamaisi',
+  You: 'Wena',
+  'Change your own password in My account': 'Fetola lefoko la gago la sephiri mo Akhaonto ya me',
+
+  // My account
+  'My account': 'Akhaonto ya me',
+  'Your profile, password and language': 'Porofaele ya gago, lefoko la sephiri le puo',
+  'Your name and role are managed by a super admin.': 'Leina la gago le seabe di laolwa ke motsamaisi mogolo.',
+
+  // Pages
+  Gate: 'Kgoro',
+  'Check visitors in and see who is expected today': 'Amogela baeti o bo o bona ba ba lebeletsweng gompieno',
+  'What the WhatsApp assistant knows about the organisation': 'Se mothusi wa WhatsApp a se itseng ka setheo',
+  'The organisation’s WhatsApp number': 'Nomoro ya WhatsApp ya setheo',
+  'Organisation details': 'Dintlha tsa setheo',
+  'Loading…': 'E a laela…',
+
+  // Company WhatsApp
+  'Visitors message this one company number to book. Hosts are notified on their own numbers from the Hosts page.':
+    'Baeti ba romela melaetsa kwa nomorong e le nngwe ya kompone go dira kopo. Baamogedi ba itsisiwe mo dinomorong tsa bone go tswa mo tsebeng ya Baamogedi.',
+  'The visitor assistant is live on this number.': 'Mothusi wa baeti o dira mo nomorong e.',
+
+  // Gate
+  'Scan QR or enter PIN': 'Skena QR kgotsa tsenya PIN',
+  'Visitor shows the WhatsApp QR. If it cannot be scanned, use the backup PIN.':
+    'Moeti o bontsha QR ya WhatsApp. Fa e sa kgone go skenwa, dirisa PIN ya tlaleletso.',
+  'QR token or pass link': 'Khoutu ya QR kgotsa kgolagano ya pasa',
+  'Paste the scanned QR or pass link': 'Kgomaretsa QR e e skennweng kgotsa kgolagano ya pasa',
+  '6-digit PIN': 'PIN ya dinomoro di le 6',
+  'Scan the QR or enter the 6-digit PIN.': 'Skena QR kgotsa tsenya PIN ya dinomoro di le 6.',
+  'Pass not found': 'Pasa ga e a bonwa',
+  'Could not validate this pass': 'Ga re a kgona go tlhomamisa pasa e',
+  'Access granted': 'O letleletswe go tsena',
+  'Pass details': 'Dintlha tsa pasa',
+  Validate: 'Tlhomamisa',
+  "Today's visits": 'Diketelo tsa gompieno',
+  "Could not load today's visits": 'Ga re a kgona go laela diketelo tsa gompieno',
+  'Read-only list of everyone expected today': 'Lenaane la go bala fela la botlhe ba ba lebeletsweng gompieno',
+  'No visits scheduled for today': 'Ga go na diketelo tse di beilweng gompieno',
+
+  // Knowledge base
+  'Delete this entry from the knowledge base?': 'Phimola se mo motheong wa kitso?',
+  'For example: answer only from this knowledge base, and never invent services, staff, or prices.':
+    'Sekai: araba fela go tswa mo motheong o wa kitso, o se ka wa itlhamela ditirelo, badiri kgotsa ditlhwatlhwa.',
+  'For example: visitors must bring a national ID.': 'Sekai: baeti ba tshwanetse go tla le karata ya boitshupo.',
+  'Upload PDF, Word (.docx), or text': 'Tsenya PDF, Word (.docx), kgotsa mokwalo',
+
+  // Visitor pass page
+  'Loading pass…': 'Pasa e a laela…',
+  'Could not load this pass': 'Ga re a kgona go laela pasa e',
+  'Show this page at the gate': 'Bontsha tsebe e kwa kgorong',
 };

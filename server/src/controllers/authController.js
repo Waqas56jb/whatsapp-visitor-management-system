@@ -1,20 +1,10 @@
 import bcrypt from 'bcryptjs';
-import { Account, Admin, Host } from '../models/index.js';
+import { Admin } from '../models/index.js';
 import { passwordStamp, signToken } from '../utils/jwt.js';
 
+// The token only identifies the login; role and status are read from the database on every request.
 export function adminToken(admin) {
   return signToken({ role: 'admin', username: admin.username, name: admin.name, adminId: admin.id, pwc: passwordStamp(admin) });
-}
-
-export function hostToken(account, hostId) {
-  return signToken({
-    role: 'host',
-    accountId: account.id,
-    hostId: hostId || null,
-    name: account.name,
-    username: account.username,
-    pwc: passwordStamp(account),
-  });
 }
 
 export async function adminLogin(req, res) {
@@ -24,33 +14,11 @@ export async function adminLogin(req, res) {
   if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
     return res.status(401).json({ error: 'Incorrect username or password.' });
   }
-  res.json({ token: adminToken(admin), admin: { name: admin.name, username: admin.username } });
-}
-
-export async function clientLogin(req, res) {
-  const username = String(req.body.username || '').trim();
-  const password = String(req.body.password || '');
-  const account = await Account.findByUsername(username);
-  if (!account || !(await bcrypt.compare(password, account.password_hash))) {
-    return res.status(401).json({ error: 'Incorrect username or password.' });
-  }
-  if (account.status === 'blocked') {
+  if ((admin.status || 'active') !== 'active') {
     return res.status(403).json({ error: 'This account has been blocked. Contact your administrator.' });
   }
-  if (account.status !== 'active') {
-    return res.status(403).json({ error: 'This account has been disabled. Contact your administrator.' });
-  }
-  const host = (await Host.findByAccountId(account.id)) || (await Host.findByName(account.name));
   res.json({
-    token: hostToken(account, host?.id),
-    host: {
-      id: account.id,
-      name: account.name,
-      username: account.username,
-      role: account.role,
-      status: account.status,
-      department: host?.department || '—',
-      hostId: host?.id || null,
-    },
+    token: adminToken(admin),
+    admin: { name: admin.name, username: admin.username, role: admin.role || 'admin' },
   });
 }

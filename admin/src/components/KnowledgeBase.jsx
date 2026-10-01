@@ -8,8 +8,6 @@ const WELCOME = {
   en: 'Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).',
   tn: 'Re a go amogela mo Botho Innovations Visitor Management System. Tsweetswee re romelele dintlha tsa gago (Maina, Kompone, Maikaelelo, Letlha la ketelo, Nako).',
 };
-const DEFAULT_INSTRUCTION =
-  'Answer only from this knowledge base. Never invent services, staff, or prices. Office hours are 8am–5pm.';
 
 const TABS = [
   { id: 'voice', label: 'Welcome & instructions', icon: BookOpen },
@@ -27,18 +25,19 @@ function ItemRow({ title, text, onRemove, busy }) {
         {title ? <b>{title}</b> : null}
         <p>{text}</p>
       </div>
-      <button className="ap-btn ap-btn-danger ap-btn-sm" type="button" disabled={busy} onClick={onRemove} aria-label={t('Delete')}>
-        <Trash2 size={13} />
+      <button className="btn-icon" type="button" disabled={busy} onClick={onRemove} aria-label={t('Delete')}>
+        <Trash2 size={14} />
       </button>
     </div>
   );
 }
 
+// Organisation-wide facts the WhatsApp assistant uses to answer visitor questions.
 export default function KnowledgeBase({ onToast }) {
   const { t } = useI18n();
   const [tab, setTab] = useState('voice');
   const [items, setItems] = useState([]);
-  const [instruction, setInstruction] = useState(DEFAULT_INSTRUCTION);
+  const [instruction, setInstruction] = useState('');
   const [rule, setRule] = useState('');
   const [note, setNote] = useState('');
   const [q, setQ] = useState('');
@@ -48,7 +47,6 @@ export default function KnowledgeBase({ onToast }) {
   const [drag, setDrag] = useState(false);
   const fileRef = useRef(null);
 
-  const instructionRow = items.find((i) => i.kind === 'instruction');
   const rules = items.filter((i) => i.kind === 'rule');
   const faqs = items.filter((i) => i.kind === 'qa');
   const documents = items.filter((i) => i.kind === 'document' || i.kind === 'text');
@@ -56,10 +54,10 @@ export default function KnowledgeBase({ onToast }) {
   const trained = rules.length + faqs.length + documents.length + websites.length;
 
   async function load() {
-    const { data } = await api.get('/host/knowledge');
+    const { data } = await api.get('/knowledge');
     const rows = Array.isArray(data) ? data : [];
     setItems(rows);
-    setInstruction(rows.find((i) => i.kind === 'instruction')?.answer || DEFAULT_INSTRUCTION);
+    setInstruction(rows.find((i) => i.kind === 'instruction')?.answer || '');
   }
 
   useEffect(() => {
@@ -73,8 +71,7 @@ export default function KnowledgeBase({ onToast }) {
     }
     setBusy(true);
     try {
-      if (instructionRow) await api.patch(`/host/knowledge/${instructionRow.id}`, { kind: 'instruction', answer: instruction.trim() });
-      else await api.post('/host/knowledge', { kind: 'instruction', title: 'instruction', answer: instruction.trim() });
+      await api.put('/knowledge/training', { instruction: instruction.trim() });
       await load();
       onToast?.(t('Saved to the knowledge base'));
     } catch (err) {
@@ -87,7 +84,7 @@ export default function KnowledgeBase({ onToast }) {
   async function addItem(payload, success) {
     setBusy(true);
     try {
-      await api.post('/host/knowledge', payload);
+      await api.post('/knowledge', payload);
       await load();
       onToast?.(success);
       return true;
@@ -133,7 +130,7 @@ export default function KnowledgeBase({ onToast }) {
     }
     setBusy(true);
     try {
-      await api.post('/host/knowledge/website', { url: url.trim() });
+      await api.post('/knowledge/website', { url: url.trim() });
       setUrl('');
       await load();
       onToast?.(t('Website imported'));
@@ -150,7 +147,7 @@ export default function KnowledgeBase({ onToast }) {
     form.append('file', file);
     setBusy(true);
     try {
-      await api.post('/host/knowledge/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      await api.post('/knowledge/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       await load();
       onToast?.(t('{name} added to the knowledge base', { name: file.name }));
     } catch (err) {
@@ -161,9 +158,10 @@ export default function KnowledgeBase({ onToast }) {
   }
 
   async function remove(id) {
+    if (!window.confirm(t('Delete this entry from the knowledge base?'))) return;
     setBusy(true);
     try {
-      await api.delete(`/host/knowledge/${id}`);
+      await api.delete(`/knowledge/${id}`);
       await load();
     } catch {
       onToast?.(t('Could not delete'), true);
@@ -173,10 +171,10 @@ export default function KnowledgeBase({ onToast }) {
   }
 
   return (
-    <div className="ap-panel kb-shell">
-      <div className="ap-panel-head">
-        <div className="ap-panel-title">
-          <span className="ap-panel-ic">
+    <div className="panel">
+      <div className="panel-head">
+        <div className="panel-title">
+          <span className="panel-ic">
             <BookOpen size={16} strokeWidth={2} />
           </span>
           <div>
@@ -188,7 +186,7 @@ export default function KnowledgeBase({ onToast }) {
             </p>
           </div>
         </div>
-        <span className="ap-badge active">{t('{count} sources', { count: trained })}</span>
+        <span className="badge active">{t('{count} sources', { count: trained })}</span>
       </div>
 
       <div className="kb-tabs" role="tablist">
@@ -211,48 +209,56 @@ export default function KnowledgeBase({ onToast }) {
       </div>
 
       {tab === 'voice' ? (
-        <div className="kb-pane">
+        <>
           <div className="kb-fixed">
             <div className="kb-fixed-head">
               <Lock size={14} />
               <b>{t('Official welcome message')}</b>
               <span>{t('Fixed — sent once when a visitor greets the company WhatsApp')}</span>
             </div>
-            <div className="kb-fixed-row">
-              <em>English</em>
-              <p>{WELCOME.en}</p>
-            </div>
-            <div className="kb-fixed-row">
-              <em>Setswana</em>
-              <p>{WELCOME.tn}</p>
+            <p>
+              <em>English</em> {WELCOME.en}
+            </p>
+            <p>
+              <em>Setswana</em> {WELCOME.tn}
+            </p>
+          </div>
+          <div className="form-grid full">
+            <div className="f-field">
+              <label htmlFor="kbInstruction">{t('Assistant instructions')}</label>
+              <textarea
+                id="kbInstruction"
+                rows={3}
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                placeholder={t('For example: answer only from this knowledge base, and never invent services, staff, or prices.')}
+              />
             </div>
           </div>
-          <div className="ap-f-field">
-            <label htmlFor="kbInstruction">{t('Assistant instructions')}</label>
-            <textarea id="kbInstruction" rows={3} value={instruction} onChange={(e) => setInstruction(e.target.value)} />
-          </div>
-          <div className="kb-actions">
-            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={saveInstruction}>
+          <div className="form-actions">
+            <button className="btn btn-violet btn-sm" type="button" disabled={busy} onClick={saveInstruction}>
               {t('Save instructions')}
             </button>
           </div>
-        </div>
+        </>
       ) : null}
 
       {tab === 'rules' ? (
-        <div className="kb-pane">
-          <div className="ap-f-field">
-            <label htmlFor="kbRule">{t('Rule')}</label>
-            <textarea
-              id="kbRule"
-              rows={3}
-              value={rule}
-              onChange={(e) => setRule(e.target.value)}
-              placeholder={t('Office hours are 8am–5pm. Visitors must be approved before entry.')}
-            />
+        <>
+          <div className="form-grid full">
+            <div className="f-field">
+              <label htmlFor="kbRule">{t('Rule')}</label>
+              <textarea
+                id="kbRule"
+                rows={3}
+                value={rule}
+                onChange={(e) => setRule(e.target.value)}
+                placeholder={t('For example: visitors must bring a national ID.')}
+              />
+            </div>
           </div>
-          <div className="kb-actions">
-            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addRule}>
+          <div className="form-actions">
+            <button className="btn btn-violet btn-sm" type="button" disabled={busy} onClick={addRule}>
               <Plus size={14} /> {t('Add rule')}
             </button>
           </div>
@@ -263,53 +269,55 @@ export default function KnowledgeBase({ onToast }) {
               <p className="kb-empty">{t('No rules yet. Add visiting hours, ID requirements, or dress code.')}</p>
             )}
           </div>
-        </div>
+        </>
       ) : null}
 
       {tab === 'files' ? (
-        <div className="kb-pane">
-          <button
-            type="button"
-            className={'kb-drop' + (drag ? ' over' : '')}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDrag(true);
-            }}
-            onDragLeave={() => setDrag(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDrag(false);
-              uploadFile(e.dataTransfer.files?.[0]);
-            }}
-            onClick={() => fileRef.current?.click()}
-          >
-            <span className="ap-panel-ic">
-              <Upload size={16} />
-            </span>
-            <div>
-              <b>{t('Upload PDF, Word, or text')}</b>
-              <p>{t('Drop a file here or browse · max 8 MB')}</p>
+        <>
+          <div className="form-grid full">
+            <button
+              type="button"
+              className={'kb-drop' + (drag ? ' over' : '')}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDrag(true);
+              }}
+              onDragLeave={() => setDrag(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDrag(false);
+                uploadFile(e.dataTransfer.files?.[0]);
+              }}
+              onClick={() => fileRef.current?.click()}
+            >
+              <span className="panel-ic">
+                <Upload size={16} />
+              </span>
+              <span>
+                <b>{t('Upload PDF, Word (.docx), or text')}</b>
+                <small>{t('Drop a file here or browse · max 8 MB')}</small>
+              </span>
+              <input
+                ref={fileRef}
+                type="file"
+                hidden
+                accept=".pdf,.docx,.txt,.md,application/pdf,text/plain"
+                onChange={(e) => uploadFile(e.target.files?.[0])}
+              />
+            </button>
+            <div className="f-field">
+              <label htmlFor="kbNote">{t('Or paste text')}</label>
+              <textarea
+                id="kbNote"
+                rows={3}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder={t('Describe your services, directions, or visitor process…')}
+              />
             </div>
-            <input
-              ref={fileRef}
-              type="file"
-              hidden
-              accept=".pdf,.doc,.docx,.txt,.md,application/pdf,text/plain"
-              onChange={(e) => uploadFile(e.target.files?.[0])}
-            />
-          </button>
-          <div className="ap-f-field">
-            <label htmlFor="kbNote">{t('Or paste text')}</label>
-            <textarea
-              id="kbNote"
-              rows={3}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder={t('Describe your services, directions, or visitor process…')}
-            />
           </div>
-          <div className="kb-actions">
-            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addNote}>
+          <div className="form-actions">
+            <button className="btn btn-violet btn-sm" type="button" disabled={busy} onClick={addNote}>
               <Plus size={14} /> {t('Save text')}
             </button>
           </div>
@@ -322,17 +330,19 @@ export default function KnowledgeBase({ onToast }) {
               <p className="kb-empty">{t('No documents yet. Upload a brochure or paste text.')}</p>
             )}
           </div>
-        </div>
+        </>
       ) : null}
 
       {tab === 'web' ? (
-        <div className="kb-pane">
-          <div className="ap-f-field">
-            <label htmlFor="kbUrl">{t('Website link')}</label>
-            <input id="kbUrl" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://bothoinnovations.com" />
+        <>
+          <div className="form-grid full">
+            <div className="f-field">
+              <label htmlFor="kbUrl">{t('Website link')}</label>
+              <input id="kbUrl" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" />
+            </div>
           </div>
-          <div className="kb-actions">
-            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addWebsite}>
+          <div className="form-actions">
+            <button className="btn btn-violet btn-sm" type="button" disabled={busy} onClick={addWebsite}>
               {t('Import page')}
             </button>
           </div>
@@ -345,23 +355,23 @@ export default function KnowledgeBase({ onToast }) {
               <p className="kb-empty">{t('No websites yet. Import a public page about the company.')}</p>
             )}
           </div>
-        </div>
+        </>
       ) : null}
 
       {tab === 'faq' ? (
-        <div className="kb-pane">
-          <div className="kb-faq-grid">
-            <div className="ap-f-field">
+        <>
+          <div className="form-grid">
+            <div className="f-field">
               <label htmlFor="kbQ">{t('Question')}</label>
               <input id="kbQ" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('Where should visitors park?')} />
             </div>
-            <div className="ap-f-field">
+            <div className="f-field">
               <label htmlFor="kbA">{t('Answer')}</label>
               <textarea id="kbA" rows={2} value={a} onChange={(e) => setA(e.target.value)} placeholder={t('Visitor parking is in the basement.')} />
             </div>
           </div>
-          <div className="kb-actions">
-            <button className="ap-btn ap-btn-teal ap-btn-sm" type="button" disabled={busy} onClick={addFaq}>
+          <div className="form-actions">
+            <button className="btn btn-violet btn-sm" type="button" disabled={busy} onClick={addFaq}>
               <Plus size={14} /> {t('Add question')}
             </button>
           </div>
@@ -374,7 +384,7 @@ export default function KnowledgeBase({ onToast }) {
               <p className="kb-empty">{t('No questions yet. Add short facts the assistant can quote.')}</p>
             )}
           </div>
-        </div>
+        </>
       ) : null}
     </div>
   );

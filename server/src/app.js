@@ -17,13 +17,7 @@ const extraOrigins = String(process.env.CORS_ORIGINS || '')
 
 const origins = [
   ...new Set(
-    [
-      process.env.CLIENT_ORIGIN,
-      process.env.ADMIN_ORIGIN,
-      ...extraOrigins,
-      'https://marvelous-determination-production-9ce0.up.railway.app',
-      'https://authentic-vision-production-7a37.up.railway.app',
-    ].filter(Boolean)
+    [process.env.ADMIN_ORIGIN, ...extraOrigins, 'https://authentic-vision-production-7a37.up.railway.app'].filter(Boolean)
   ),
 ];
 

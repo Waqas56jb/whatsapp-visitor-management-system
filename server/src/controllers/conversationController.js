@@ -23,26 +23,13 @@ function mapMessage(row) {
 }
 
 export async function listConversations(req, res) {
-  const hostId = req.user?.role === 'host' ? req.user.hostId : null;
-  if (req.user?.role === 'host' && !hostId) return res.json([]);
-  const rows = await ConversationLog.listThreads(hostId);
-  res.json(rows.map(mapThread));
-}
-
-export async function listHostConversations(req, res) {
-  const hostId = req.user?.hostId;
-  if (!hostId) return res.json([]);
-  const rows = await ConversationLog.listThreads(hostId);
+  const rows = await ConversationLog.listThreads();
   res.json(rows.map(mapThread));
 }
 
 export async function getConversation(req, res) {
   const phone = normalizePhone(decodeURIComponent(req.params.phoneNumber || ''));
   if (!phone) return res.status(400).json({ error: 'Invalid phone number' });
-  if (req.user?.role === 'host') {
-    const allowed = await ConversationLog.phoneBelongsToHost(phone, req.user.hostId);
-    if (!allowed) return res.status(403).json({ error: 'Forbidden' });
-  }
   const messages = await ConversationLog.listByPhone(phone);
   res.json({ phone, messages: messages.map(mapMessage) });
 }

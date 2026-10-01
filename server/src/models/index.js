@@ -2,50 +2,31 @@ import { query, queryOne } from '../config/db.js';
 import { T } from '../config/tables.js';
 import { normalizePhone } from '../utils/phone.js';
 
+// Admin panel logins. role: super_admin | admin | reception; status: active | blocked.
 export const Admin = {
   findByUsername: (username) =>
     queryOne(`SELECT * FROM ${T.admins} WHERE LOWER(username) = LOWER($1)`, [username]),
   findById: (id) => queryOne(`SELECT * FROM ${T.admins} WHERE id = $1`, [id]),
+  list: () => query(`SELECT * FROM ${T.admins} ORDER BY created_at ASC`),
   // Sets a new password and stamps the change, which ends every session issued before it.
   setPassword: (id, password_hash) =>
     queryOne(
       `UPDATE ${T.admins} SET password_hash = $2, password_changed_at = NOW() WHERE id = $1 RETURNING *`,
       [id, password_hash]
     ),
-  create: (username, password_hash, name = 'Admin') =>
+  create: ({ username, password_hash, name, role }) =>
     queryOne(
-      `INSERT INTO ${T.admins} (username, password_hash, name) VALUES ($1,$2,$3) RETURNING *`,
-      [username, password_hash, name]
-    ),
-};
-
-export const Account = {
-  findByUsername: (username) =>
-    queryOne(`SELECT * FROM ${T.accounts} WHERE LOWER(username) = LOWER($1)`, [username]),
-  findById: (id) => queryOne(`SELECT * FROM ${T.accounts} WHERE id = $1`, [id]),
-  list: () => query(`SELECT * FROM ${T.accounts} ORDER BY created_at DESC`),
-  create: ({ name, username, password_hash, role, status = 'active' }) =>
-    queryOne(
-      `INSERT INTO ${T.accounts} (name, username, password_hash, role, status)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [name, username, password_hash, role, status]
-    ),
-  // Sets a new password and stamps the change, which ends every session issued before it.
-  setPassword: (id, password_hash) =>
-    queryOne(
-      `UPDATE ${T.accounts} SET password_hash = $2, password_changed_at = NOW() WHERE id = $1 RETURNING *`,
-      [id, password_hash]
-    ),
-  toggle: (id) =>
-    queryOne(
-      `UPDATE ${T.accounts}
-       SET status = CASE WHEN status = 'active' THEN 'disabled' ELSE 'active' END
-       WHERE id = $1 RETURNING *`,
-      [id]
+      `INSERT INTO ${T.admins} (username, password_hash, name, role, status) VALUES ($1,$2,$3,$4,'active') RETURNING *`,
+      [username, password_hash, name, role]
     ),
   setStatus: (id, status) =>
-    queryOne(`UPDATE ${T.accounts} SET status = $2 WHERE id = $1 RETURNING *`, [id, status]),
-  remove: (id) => queryOne(`DELETE FROM ${T.accounts} WHERE id = $1 RETURNING *`, [id]),
+    queryOne(`UPDATE ${T.admins} SET status = $2 WHERE id = $1 RETURNING *`, [id, status]),
+  setRole: (id, role) => queryOne(`UPDATE ${T.admins} SET role = $2 WHERE id = $1 RETURNING *`, [id, role]),
+  remove: (id) => queryOne(`DELETE FROM ${T.admins} WHERE id = $1 RETURNING *`, [id]),
+  countActiveSuperAdmins: async () =>
+    Number(
+      (await queryOne(`SELECT COUNT(*)::int AS n FROM ${T.admins} WHERE role = 'super_admin' AND status = 'active'`))?.n || 0
+    ),
 };
 
 export const Host = {
@@ -88,8 +69,6 @@ export const Host = {
       [digits]
     );
   },
-  findByAccountId: (accountId) =>
-    queryOne(`SELECT * FROM ${T.hosts} WHERE account_id = $1`, [accountId]),
   create: ({ name, department, phone, status = 'active', account_id = null }) =>
     queryOne(
       `INSERT INTO ${T.hosts} (name, department, phone, status, account_id)
@@ -289,23 +268,18 @@ export const ConversationState = {
   clear: (phone) => query(`DELETE FROM ${T.conversations} WHERE phone_number = $1`, [conversationKey(phone)]),
 };
 
+// Organisation-wide knowledge for the WhatsApp assistant. account_id is legacy and always NULL
+// for new rows (see migration 011); nothing here filters or deletes by account.
 export const Knowledge = {
-  list: (accountId) =>
-    accountId
-      ? query(`SELECT * FROM ${T.knowledge} WHERE account_id = $1 ORDER BY kind ASC, id ASC`, [accountId])
-      : Knowledge.listAll(),
   listAll: () => query(`SELECT * FROM ${T.knowledge} ORDER BY kind ASC, id ASC`),
-  findById: (id, accountId) =>
-    accountId
-      ? queryOne(`SELECT * FROM ${T.knowledge} WHERE id = $1 AND account_id = $2`, [id, accountId])
-      : queryOne(`SELECT * FROM ${T.knowledge} WHERE id = $1`, [id]),
-  create: ({ account_id, kind, title = '', question = '', answer = '' }) =>
+  findById: (id) => queryOne(`SELECT * FROM ${T.knowledge} WHERE id = $1`, [id]),
+  create: ({ kind, title = '', question = '', answer = '' }) =>
     queryOne(
       `INSERT INTO ${T.knowledge} (account_id, kind, title, question, answer)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [account_id, kind || 'qa', title, question, answer]
+       VALUES (NULL,$1,$2,$3,$4) RETURNING *`,
+      [kind || 'qa', title, question, answer]
     ),
-  update: (id, accountId, fields) => {
+  update: (id, fields) => {
     const allowed = ['kind', 'title', 'question', 'answer'];
     const sets = [];
     const vals = [];
@@ -315,50 +289,17 @@ export const Knowledge = {
         sets.push(`${key} = $${vals.length}`);
       }
     }
-    if (!sets.length) return Knowledge.findById(id, accountId);
-    if (accountId) {
-      vals.push(id, accountId);
-      return queryOne(
-        `UPDATE ${T.knowledge} SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND account_id = $${vals.length} RETURNING *`,
-        vals
-      );
-    }
+    if (!sets.length) return Knowledge.findById(id);
     vals.push(id);
     return queryOne(`UPDATE ${T.knowledge} SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals);
   },
-  remove: (id, accountId) =>
-    accountId
-      ? queryOne(`DELETE FROM ${T.knowledge} WHERE id = $1 AND account_id = $2 RETURNING *`, [id, accountId])
-      : queryOne(`DELETE FROM ${T.knowledge} WHERE id = $1 RETURNING *`, [id]),
-  upsertByKind: async (accountId, kind, { title = '', question = '', answer = '' }) => {
-    const existing = await queryOne(
-      `SELECT * FROM ${T.knowledge} WHERE account_id = $1 AND kind = $2 ORDER BY id ASC LIMIT 1`,
-      [accountId, kind]
-    );
-    if (existing) {
-      return Knowledge.update(existing.id, accountId, { title, question, answer });
-    }
-    return Knowledge.create({ account_id: accountId, kind, title, question, answer });
+  remove: (id) => queryOne(`DELETE FROM ${T.knowledge} WHERE id = $1 RETURNING *`, [id]),
+  // One row per kind (greeting / instruction) for the whole organisation: the oldest is kept.
+  upsertByKind: async (kind, { title = '', question = '', answer = '' }) => {
+    const existing = await queryOne(`SELECT * FROM ${T.knowledge} WHERE kind = $1 ORDER BY id ASC LIMIT 1`, [kind]);
+    if (existing) return Knowledge.update(existing.id, { title, question, answer });
+    return Knowledge.create({ kind, title, question, answer });
   },
-};
-
-export const WhatsAppLink = {
-  findByAccountId: (accountId) =>
-    queryOne(`SELECT * FROM ${T.whatsappLinks} WHERE account_id = $1`, [accountId]),
-  listLinked: () => query(`SELECT * FROM ${T.whatsappLinks} WHERE status IN ('connected', 'connecting')`),
-  upsert: ({ account_id, host_id = null, phone = null, wa_name = null, status = 'disconnected' }) =>
-    queryOne(
-      `INSERT INTO ${T.whatsappLinks} (account_id, host_id, phone, wa_name, status, updated_at)
-       VALUES ($1,$2,$3,$4,$5, NOW())
-       ON CONFLICT (account_id) DO UPDATE
-         SET host_id = COALESCE(EXCLUDED.host_id, ${T.whatsappLinks}.host_id),
-             phone = COALESCE(EXCLUDED.phone, ${T.whatsappLinks}.phone),
-             wa_name = COALESCE(EXCLUDED.wa_name, ${T.whatsappLinks}.wa_name),
-             status = EXCLUDED.status,
-             updated_at = NOW()
-       RETURNING *`,
-      [account_id, host_id, phone, wa_name, status]
-    ),
 };
 
 export const ConversationLog = {
@@ -385,24 +326,6 @@ export const ConversationLog = {
        ORDER BY created_at ASC, id ASC`,
       [normalizePhone(phone)]
     ),
-  phoneBelongsToHost: async (phone, hostId) => {
-    const row = await queryOne(
-      `SELECT vs.id
-       FROM ${T.visits} vs
-       WHERE vs.host_id = $2
-         AND (
-           regexp_replace(COALESCE(vs.visitor_phone, ''), '[^0-9]', '', 'g') = $1
-           OR vs.id IN (
-             SELECT visit_id FROM ${T.conversationLog}
-             WHERE regexp_replace(phone_number, '[^0-9]', '', 'g') = $1
-               AND visit_id IS NOT NULL
-           )
-         )
-       LIMIT 1`,
-      [normalizePhone(phone), hostId]
-    );
-    return Boolean(row);
-  },
   listThreads: (hostId) => {
     const hostFilter = hostId
       ? `WHERE regexp_replace(cl.phone_number, '[^0-9]', '', 'g') IN (

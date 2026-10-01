@@ -11,6 +11,5 @@ export const T = {
   conversations: `${prefix}conversation_states`,
   conversationLog: `${prefix}conversation_log`,
   knowledge: `${prefix}knowledge_base`,
-  whatsappLinks: `${prefix}whatsapp_links`,
   companyWhatsApp: `${prefix}company_whatsapp`,
 };

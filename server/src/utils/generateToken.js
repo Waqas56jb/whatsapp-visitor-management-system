@@ -15,7 +15,8 @@ export function generateRef() {
 
 export function passPayload(token) {
   const raw = String(token || '').trim();
-  const base = String(process.env.PUBLIC_PASS_URL || process.env.CLIENT_ORIGIN || '').replace(/\/$/, '');
+  // PUBLIC_PASS_URL = the admin app's address; the visitor's pass page is its public /pass/ route.
+  const base = String(process.env.PUBLIC_PASS_URL || process.env.ADMIN_ORIGIN || '').replace(/\/$/, '');
   return base && raw ? `${base}/pass/${raw}` : raw;
 }
 

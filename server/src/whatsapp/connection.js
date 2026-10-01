@@ -54,34 +54,17 @@ function emptyStatus() {
   };
 }
 
-export function clientSessionKey(accountId) {
-  return `client:${accountId}`;
-}
-
-function authDirFor(key) {
-  if (key === 'admin') return AUTH_DIR;
-  return path.join(SERVER_ROOT, 'auth_info_baileys', key.replace(':', '_'));
+function authDirFor() {
+  return AUTH_DIR;
 }
 
 export function getSession(key = 'admin') {
   return sessions.get(key) || null;
 }
 
-export function getSock(key = 'admin') {
-  if (sessions.get('admin')?.status?.connected && sessions.get('admin')?.sock) return sessions.get('admin').sock;
-  if (key && sessions.get(key)?.sock) return sessions.get(key).sock;
-  for (const session of sessions.values()) {
-    if (session.sock && session.status.connected) return session.sock;
-  }
-  return sessions.get(key)?.sock || null;
-}
-
-export function getSockForAccount() {
-  return getSock('admin');
-}
-
-export function getQrFilePath() {
-  return QR_FILE;
+// The organisation's single WhatsApp socket.
+export function getSock() {
+  return sessions.get('admin')?.sock || null;
 }
 
 function publicStatus(session, includeQr = false) {
@@ -93,18 +76,6 @@ function publicStatus(session, includeQr = false) {
     qrDataUrl: includeQr && status.qrAvailable && !status.connected ? status.qrDataUrl : null,
     user: status.user,
   };
-}
-
-export function getWhatsAppStatus() {
-  const session = sessions.get('admin');
-  return {
-    ...publicStatus(session),
-    qrUrl: '/api/whatsapp/qr',
-  };
-}
-
-export function getClientWhatsAppStatus(accountId, includeQr = false) {
-  return getCompanyWhatsAppStatus(includeQr);
 }
 
 export function getCompanyWhatsAppStatus(includeQr = false) {
@@ -369,42 +340,4 @@ export async function stopCompanyWhatsApp() {
   clearAdminQrFile();
   await persistCompanyLink({ status: 'disconnected', phone: null, wa_name: null, clear: true });
   return getCompanyWhatsAppStatus(false);
-}
-
-export async function startClientWhatsApp(accountId, hostId) {
-  if (!accountId) throw new Error('accountId is required');
-  let resolvedHostId = hostId || null;
-  if (!resolvedHostId) {
-    const { Host } = await import('../models/index.js');
-    const host = await Host.findByAccountId(accountId);
-    resolvedHostId = host?.id || null;
-  }
-  return startSession(clientSessionKey(accountId), {
-    listenMessages: true,
-    accountId,
-    hostId: resolvedHostId,
-  });
-}
-
-export async function stopClientWhatsApp(accountId) {
-  const key = clientSessionKey(accountId);
-  const session = sessions.get(key);
-  if (session?.sock) {
-    try {
-      await session.sock.logout();
-    } catch {
-      try {
-        session.sock.end();
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-  if (session) session.generation = (session.generation || 0) + 1;
-  sessions.delete(key);
-  await clearAuthDir(authDirFor(key));
-}
-
-export async function restoreClientSessions() {
-  await startWhatsApp({ listenMessages: true });
 }

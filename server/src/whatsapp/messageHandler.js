@@ -1,6 +1,5 @@
 import { ConversationLog, Host } from '../models/index.js';
 import { chatJidFromMsg, extractText, isIgnorableJid, isUserChatMessage, phoneFromMsg } from './inbound.js';
-import { portalRequestsLink } from './notify.js';
 import { sendText } from './sendMessage.js';
 import { handleVisitorWithAgent, sendVisitorError } from './visitorAgent.js';
 
@@ -27,19 +26,16 @@ function enqueue(key, task) {
   return run;
 }
 
-// Hosts get a WhatsApp heads-up only; decisions are made in the Client Portal.
+// Hosts get a WhatsApp heads-up only; decisions are made in the admin panel for now.
 async function handleHostCommand(from, text) {
   if (!HOST_DECISION_RE.test(String(text || '').trim())) return false;
   const host = await Host.findByPhone(from);
   if (!host) return false;
-  const portal = portalRequestsLink();
   await sendText(
     from,
     [
       'Approving or rejecting visits on WhatsApp is not available yet.',
-      portal
-        ? `Please open the Client Portal to approve or reject this visit:\n${portal}`
-        : 'Please open the Client Portal → Visit requests to approve or reject this visit.',
+      'The request is awaiting approval in the admin panel.',
     ].join('\n'),
     { onlyTarget: true }
   );

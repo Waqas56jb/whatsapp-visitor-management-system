@@ -1,6 +1,4 @@
-import bcrypt from 'bcryptjs';
 import {
-  Account,
   Audit,
   Host,
   Settings,
@@ -11,8 +9,9 @@ import {
   visitsByDepartment,
 } from '../models/index.js';
 import { generateQrImage } from '../utils/generateToken.js';
-import { mapAccount, mapAudit, mapHost, mapVisit, mapVisitor } from '../utils/mappers.js';
+import { mapAudit, mapHost, mapVisit, mapVisitor } from '../utils/mappers.js';
 import { createPendingVisit, decideVisit } from '../services/visits.js';
+import { todayStamp } from '../utils/dateParse.js';
 
 function actorName(req) {
   return req.user?.name || req.user?.username || 'Admin';
@@ -45,6 +44,17 @@ export async function getVisitor(req, res) {
 export async function listVisits(req, res) {
   const rows = await Visit.list({ status: req.query.status, limit: req.query.limit });
   res.json(rows.map(mapVisit));
+}
+
+// Reception's read-only list: today's visits (organisation time zone), without PINs or QR tokens.
+export async function listTodayVisits(req, res) {
+  const today = todayStamp();
+  const rows = (await Visit.list()).map(mapVisit).filter((v) => v.date === today);
+  res.json(
+    rows
+      .sort((a, b) => String(a.time).localeCompare(String(b.time)))
+      .map(({ pin, qrToken, visitorPhone, ...rest }) => rest)
+  );
 }
 
 export async function createVisit(req, res) {
@@ -80,7 +90,6 @@ export async function approveVisit(req, res) {
       visitId: req.params.id,
       decision: 'approved',
       actor: actorName(req),
-      actorHostId: req.user?.role === 'host' ? req.user.hostId : null,
     });
     res.json(await hydrateVisit(visit.id));
   } catch (err) {
@@ -94,7 +103,6 @@ export async function rejectVisit(req, res) {
       visitId: req.params.id,
       decision: 'rejected',
       actor: actorName(req),
-      actorHostId: req.user?.role === 'host' ? req.user.hostId : null,
     });
     res.json(await hydrateVisit(visit.id));
   } catch (err) {
@@ -103,7 +111,7 @@ export async function rejectVisit(req, res) {
 }
 
 export async function listPasses(req, res) {
-  const rows = await Visit.list({ status: 'approved', hostId: req.user.role === 'host' ? req.user.hostId : undefined });
+  const rows = await Visit.list({ status: 'approved' });
   const mapped = [];
   for (const row of rows) {
     const item = mapVisit(row);
@@ -158,39 +166,6 @@ export async function updateHost(req, res) {
   res.json(mapHost(host));
 }
 
-export async function listAccounts(req, res) {
-  const rows = await Account.list();
-  res.json(rows.map(mapAccount));
-}
-
-export async function createAccount(req, res) {
-  const name = String(req.body.name || '').trim();
-  const username = String(req.body.username || '').trim();
-  const password = String(req.body.password || '');
-  const role = String(req.body.role || 'Host');
-  if (!name || !username || !password) return res.status(400).json({ error: 'Please fill in every field' });
-  if (await Account.findByUsername(username)) {
-    return res.status(409).json({ error: 'That username is already taken' });
-  }
-  const password_hash = await bcrypt.hash(password, 10);
-  const account = await Account.create({ name, username, password_hash, role });
-  let host = await Host.findByName(name);
-  if (!host && role === 'Host') {
-    host = await Host.create({ name, department: req.body.department || '—', phone: req.body.phone || '', account_id: account.id });
-  } else if (host && !host.account_id) {
-    await Host.update(host.id, { account_id: account.id });
-  }
-  await Audit.add({ actor: actorName(req), action: 'Created client account', details: `${username} (${role})` });
-  res.status(201).json(mapAccount(account));
-}
-
-export async function toggleAccount(req, res) {
-  const account = await Account.toggle(req.params.id);
-  if (!account) return res.status(404).json({ error: 'Account not found' });
-  await Audit.add({ actor: actorName(req), action: 'Updated account status', details: `${account.username} → ${account.status}` });
-  res.json(mapAccount(account));
-}
-
 function requireConfirm(req, res) {
   if (req.body?.confirm !== true) {
     res.status(400).json({ error: 'Confirmation required' });
@@ -224,33 +199,6 @@ export async function deleteHost(req, res) {
     details: `${existing.name} · ${existing.department} · ${existing.phone || 'no phone'}`,
   });
   res.json({ ok: true, deleted: mapHost(deleted) });
-}
-
-export async function blockAccount(req, res) {
-  const account = await Account.setStatus(req.params.id, 'blocked');
-  if (!account) return res.status(404).json({ error: 'Account not found' });
-  await Audit.add({ actor: actorName(req), action: 'Blocked account', details: `${account.username} (${account.name})` });
-  res.json(mapAccount(account));
-}
-
-export async function unblockAccount(req, res) {
-  const account = await Account.setStatus(req.params.id, 'active');
-  if (!account) return res.status(404).json({ error: 'Account not found' });
-  await Audit.add({ actor: actorName(req), action: 'Unblocked account', details: `${account.username} (${account.name})` });
-  res.json(mapAccount(account));
-}
-
-export async function deleteAccount(req, res) {
-  if (!requireConfirm(req, res)) return;
-  const existing = await Account.findById(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Account not found' });
-  const deleted = await Account.remove(req.params.id);
-  await Audit.add({
-    actor: actorName(req),
-    action: 'Deleted account',
-    details: `${existing.name} · ${existing.username} · ${existing.role}`,
-  });
-  res.json({ ok: true, deleted: mapAccount(deleted) });
 }
 
 export async function getReportsSummary(req, res) {
@@ -297,11 +245,3 @@ export async function updateSettings(req, res) {
   res.json({ orgName: row.org_name, phone: row.phone, email: row.email });
 }
 
-export async function createPublicVisit(req, res) {
-  const name = String(req.body.name || '').trim();
-  const hostName = String(req.body.host || '').trim();
-  const date = req.body.date;
-  if (!name || !hostName || !date) return res.status(400).json({ error: 'name, host and date are required' });
-  req.body.visitor = name;
-  return createVisit(req, res);
-}

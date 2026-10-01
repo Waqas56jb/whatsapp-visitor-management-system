@@ -1,17 +1,19 @@
 import jwt from 'jsonwebtoken';
-import { Account, Admin } from '../models/index.js';
+import { Admin } from '../models/index.js';
 import { passwordStamp } from '../utils/jwt.js';
 
-function loadPrincipal(payload) {
-  if (payload.role === 'admin') return payload.adminId ? Admin.findById(payload.adminId) : null;
-  if (payload.role === 'host') return payload.accountId ? Account.findById(payload.accountId) : null;
-  return null;
-}
+// Admin panel roles, from most to least access.
+export const ROLES = ['super_admin', 'admin', 'reception'];
+export const ANY_ROLE = ROLES;
+export const STAFF = ['super_admin', 'admin'];
+export const SUPER_ADMIN = ['super_admin'];
 
-// Checks the token, then the login behind it on every request: it must still exist, a portal
-// account must still be active, and the password must not have changed since the token was
-// issued. Blocking, deleting, or changing a password therefore ends sessions immediately.
+// Checks the token, then the login behind it on every request: it must still exist, be active,
+// hold one of the allowed roles, and its password must not have changed since the token was
+// issued. The role comes from the database, so blocking, deleting, a role change or a password
+// change takes effect immediately.
 export function requireAuth(...roles) {
+  const allowed = roles.flat();
   return async (req, res, next) => {
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -22,24 +24,24 @@ export function requireAuth(...roles) {
     } catch {
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
-    if (roles.length && !roles.includes(payload.role)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-    let principal;
+    if (!payload.adminId) return res.status(401).json({ error: 'Your session has ended. Please sign in again.' });
+    let admin;
     try {
-      principal = await loadPrincipal(payload);
+      admin = await Admin.findById(payload.adminId);
     } catch (err) {
       return next(err);
     }
-    if (!principal) return res.status(401).json({ error: 'Your session has ended. Please sign in again.' });
-    if (payload.role === 'host' && principal.status !== 'active') {
-      return res.status(401).json({ error: 'This account is no longer active. Contact your administrator.' });
+    if (!admin) return res.status(401).json({ error: 'Your session has ended. Please sign in again.' });
+    if ((admin.status || 'active') !== 'active') {
+      return res.status(401).json({ error: 'This account has been blocked. Contact your administrator.' });
     }
-    if ((payload.pwc || 0) !== passwordStamp(principal)) {
+    if ((payload.pwc || 0) !== passwordStamp(admin)) {
       return res.status(401).json({ error: 'Your password was changed. Please sign in again.' });
     }
-    req.user = payload;
-    req.principal = principal;
+    const role = ROLES.includes(admin.role) ? admin.role : 'admin';
+    if (allowed.length && !allowed.includes(role)) return res.status(403).json({ error: 'Forbidden' });
+    req.user = { adminId: admin.id, role, name: admin.name, username: admin.username };
+    req.principal = admin;
     next();
   };
 }

@@ -1,14 +1,16 @@
 # WhatsApp VMS — Server
 
-Node.js + Express API for the Botho Innovations visitor management system. Tables are prefixed `whatsapp_visitor_management_` so they never collide with other projects on the same Supabase database.
+Node.js + Express API for a single organisation's visitor management system. Tables are prefixed
+`whatsapp_visitor_management_` so they never collide with other projects on the same Supabase database.
 
-Visitors book through WhatsApp chat. Hosts approve or reject by replying `APPROVE VMS-2026-XXXXXX` / `REJECT VMS-2026-XXXXXX`. This uses **Baileys** (WhatsApp Web linking via QR). There is no Meta Business API and no official token.
+Visitors book through the organisation's WhatsApp number. Hosts get a WhatsApp heads-up for each
+request; visits are approved or rejected in the admin panel (`/admin`). WhatsApp uses **Baileys**
+(WhatsApp Web linking via QR). There is no Meta Business API and no official token.
 
 ## Warning (read this first)
 
-This uses an **unofficial** WhatsApp connection. Running it on a live/production number can get that number **banned** — it is against WhatsApp's Terms of Service.
-
-Use a **spare / secondary** phone number for testing. Do **not** link the client's main business WhatsApp until they understand this risk.
+This uses an **unofficial** WhatsApp connection. Running it on a live/production number can get that
+number **banned** — it is against WhatsApp's Terms of Service.
 
 ## Install
 
@@ -24,11 +26,10 @@ Copy `.env.example` to `.env`. Required:
 - `DATABASE_URL` — Supabase Postgres URI (`sslmode=require`)
 - `JWT_SECRET`
 - `PORT` (default `5000`)
-- `CLIENT_ORIGIN=http://localhost:5173`
-- `ADMIN_ORIGIN=http://localhost:5174`
+- `ADMIN_ORIGIN` — the admin app's address (CORS), e.g. `http://localhost:5174`
+- `PUBLIC_PASS_URL` — the admin app's address; the QR sent to visitors opens its public `/pass/<token>` page
 - `ORG_LOCATION` — location printed on the visitor approval message (optional)
-
-No WhatsApp tokens are needed. Linking is done by scanning a QR code.
+- `OPENAI_API_KEY`, `OPENAI_MODEL` — WhatsApp assistant answers (optional; rule-based fallbacks without it)
 
 ## Migrate + seed
 
@@ -37,120 +38,73 @@ npm run migrate
 npm run seed
 ```
 
-`npm run seed` is for a fresh local database only. It refuses to run when `NODE_ENV=production`
-or when an admin already exists. It asks for the admin password (at least 10 characters), or reads
-it from `SEED_ADMIN_PASSWORD`. A demo host login is only created when `SEED_HOST_PASSWORD` is set.
+`npm run migrate` is safe to re-run on the live database. `npm run seed` is for a fresh local database
+only: it refuses to run when `NODE_ENV=production` or when an admin already exists, asks for the
+super admin's password (at least 10 characters, or `SEED_ADMIN_PASSWORD`), and adds demo hosts and
+visits. Demo hosts have no phone number.
 
-Demo hosts have no phone number. Put a **real** WhatsApp number on the host you will approve as (Admin → Hosts).
+## Admin panel roles
 
-## Link WhatsApp (first time)
+| Role | Can use |
+|---|---|
+| `super_admin` | Everything, including sub-admins, the company WhatsApp number and Settings |
+| `admin` | Daily operations: hosts, visit requests, passes, conversations, knowledge base, reports, audit, gate |
+| `reception` | The gate validator and today's visits |
 
-Do this once, before (or while) running the full server:
+Roles are enforced by the server on every request. Every session is re-checked on each request: the
+login must exist, be active, and its password must not have changed since the token was issued.
 
-```bash
-cd server
-node testConnection.js
-```
+## Link WhatsApp
 
-or:
+Sign in as a super admin → **WhatsApp** → **Generate QR**, then on the company phone:
+**WhatsApp → Linked devices → Link a device** → scan the QR.
 
-```bash
-npm run whatsapp:link
-```
+For local setup without the panel, `npm run whatsapp:link` prints the QR in the terminal.
 
-1. A QR prints in the terminal.
-2. The same QR is saved as `server/whatsapp-qr.png` (and at `GET http://localhost:5000/api/whatsapp/qr` when the API is running).
-3. On the spare phone: **WhatsApp → Linked Devices → Link a device** → scan the QR.
-4. When you see `WhatsApp linked as …`, press Ctrl+C if you used `testConnection.js`, then start the real server.
-
-Session files live in `server/auth_info_baileys`. **Do not delete that folder** or you will have to scan again. It is gitignored.
-
-If WhatsApp logs the session out, the server clears `auth_info_baileys` and shows a fresh QR.
+Session files live in `server/auth_info_baileys` (gitignored) and are also backed up to the database.
 
 ## Start
 
 ```bash
-cd server
-npm run dev
-```
-
-API: `http://localhost:5000`  
-Health: `GET /api/health`  
-WhatsApp status: `GET /api/whatsapp/status`  
-Linking QR image: `GET /api/whatsapp/qr`
-
-## Test the full booking flow
-
-1. `npm run migrate` then `npm run dev`. Confirm `GET /api/whatsapp/status` shows `"connected": true`.
-2. From a **visitor** phone, message the linked number: `hi`
-3. Reply `1` (Request a visit) → `1` or `2` for Social / Official → name → company (official only) → host number from the list → purpose → date (`22 Sep` or `2026-09-22`) → time (`10am` or `10:00`).
-4. Bot creates a pending visit and sends a reference (`VMS-2026-XXXXXX`).
-5. The **host** WhatsApp (the number stored on that host) receives the request.
-6. Host replies: `APPROVE VMS-2026-XXXXXX` or `REJECT VMS-2026-XXXXXX`
-7. Visitor receives a decline text, or an approval caption plus the QR image (host, date, time, location).
-8. Gate validation (REST, not WhatsApp):
-
-```bash
-POST http://localhost:5000/api/passes/validate
-{ "token": "<value encoded in the QR>" }
-```
-
-Reply `menu` or `cancel` at any time to restart. Progress is stored in `whatsapp_visitor_management_conversation_states`. Full chat history is stored in `whatsapp_visitor_management_conversation_log`.
-
-Approving from the admin or host portal also sends the WhatsApp QR if the visit has a visitor phone.
-
-## Run the full stack
-
-```bash
-# terminal 1
-cd server && npm run dev
-
-# terminal 2
-cd admin && npm run dev          # http://localhost:5174
-
-# terminal 3
-cd client && npm run dev         # http://localhost:5173
+cd server && npm run dev      # http://localhost:5000
+cd admin && npm run dev       # http://localhost:5174
 ```
 
 ## Endpoints
 
-### Auth
-- `POST /api/auth/admin/login` `{ username, password }` → `{ token, admin }`
-- `POST /api/auth/client/login` `{ username, password }` → `{ token, host }`
+Header for protected routes: `Authorization: Bearer <token>`.
+Roles: **any** = super_admin, admin, reception · **staff** = super_admin, admin · **super** = super_admin.
 
-Header for protected routes: `Authorization: Bearer <token>`
-
-### Admin
-- `GET /api/dashboard/stats`
-- `GET /api/visitors` `GET /api/visitors/:id`
-- `GET /api/visits?status=pending&limit=5` `POST /api/visits`
-- `PATCH /api/visits/:id/approve` `PATCH /api/visits/:id/reject`
-- `GET /api/passes` `POST /api/passes/:id/revoke`
-- `GET /api/conversations` `GET /api/conversations/:phoneNumber`
-- `GET /api/hosts` `POST /api/hosts` `PATCH /api/hosts/:id`
-- `PATCH /api/hosts/:id/block` `PATCH /api/hosts/:id/unblock` `DELETE /api/hosts/:id` `{ confirm: true }`
-- `GET /api/accounts` `POST /api/accounts` `PATCH /api/accounts/:id/toggle`
-- `PATCH /api/accounts/:id/block` `PATCH /api/accounts/:id/unblock` `DELETE /api/accounts/:id` `{ confirm: true }`
-- `GET /api/reports/summary` `GET /api/reports/export?type=visits|visitors|audit`
-- `GET /api/audit` `GET /api/settings` `PUT /api/settings`
-
-### Host
-- `GET /api/host/dashboard`
-- `GET /api/host/visits`
-- `PATCH /api/host/visits/:id/approve` `PATCH /api/host/visits/:id/reject`
-- `GET /api/host/passes` `GET /api/host/history` `GET /api/host/notifications` `GET /api/host/profile`
-- `GET /api/host/conversations`
-- `POST /api/host/agent` `{ message, history }` — OpenAI host assistant (needs `OPENAI_API_KEY`)
-- `GET/POST /api/host/whatsapp/status|connect|disconnect`
-- `GET/POST /api/host/knowledge` `PUT /api/host/knowledge/training` `PATCH/DELETE /api/host/knowledge/:id`
-- `GET /api/passes/info/:token` — visitor pass details (no check-in)
-
-### Public / WhatsApp
-- `GET /api/health`
-- `POST /api/visits/public` `{ name, host, company, purpose, date, time }` (rate-limited)
-- `GET /api/whatsapp/status` → `{ connected, qrAvailable, user }`
-- `GET /api/whatsapp/qr` → PNG of the linking QR (only while waiting to scan)
-- `POST /api/passes/validate` `{ token }` or `{ pin }` — reception check-in
-- `GET /api/passes/info/:token` or `GET /api/passes/info?pin=` — visitor/reception details (no check-in)
+| Method | Path | Role |
+|---|---|---|
+| GET | `/api/health` | public |
+| POST | `/api/auth/admin/login` | public (10 attempts / 15 min per IP + username) |
+| GET | `/api/passes/info/:token` | public — visitor pass page, full 64-character token only |
+| GET | `/api/auth/me` | any |
+| POST | `/api/auth/admin/password` | any — change own password |
+| POST | `/api/passes/validate` `{ token }` or `{ pin }` | any — gate check-in |
+| GET | `/api/passes/info?token=` or `?pin=` | any — gate lookup without check-in |
+| GET | `/api/visits/today` | any — today's visits, no PINs or tokens |
+| GET | `/api/dashboard/stats`, `/api/visitors`, `/api/visitors/:id` | staff |
+| GET/POST | `/api/visits` | staff |
+| PATCH | `/api/visits/:id/approve`, `/api/visits/:id/reject` | staff |
+| GET | `/api/passes` · POST `/api/passes/:id/revoke` | staff |
+| GET | `/api/conversations`, `/api/conversations/:phoneNumber` | staff |
+| GET/POST | `/api/hosts` · PATCH `/api/hosts/:id`, `/:id/block`, `/:id/unblock` · DELETE `/api/hosts/:id` | staff |
+| GET/POST | `/api/knowledge` · PATCH/DELETE `/api/knowledge/:id` · PUT `/api/knowledge/training` · POST `/api/knowledge/upload`, `/api/knowledge/website` | staff |
+| GET | `/api/reports/summary`, `/api/reports/export?type=visits\|visitors\|audit`, `/api/audit`, `/api/settings` | staff |
+| PUT | `/api/settings` | super |
+| GET | `/api/settings/whatsapp` · POST `/api/settings/whatsapp/connect`, `/disconnect` | super |
+| GET/POST | `/api/admins` · PATCH `/api/admins/:id/role`, `/:id/block`, `/:id/unblock` · DELETE `/api/admins/:id` · POST `/api/admins/:id/password` | super |
 
 Gate validation reasons: `not_found`, `not_approved`, `already_used`, `expired`, `missing`.
+
+## Tests
+
+```bash
+npm test                              # booking engine, knowledge search, API roles and sessions
+node test/manual/transcripts.js       # WhatsApp conversations end to end (in-memory, no OpenAI)
+```
+
+`test/db.test.js` checks the migrations on a real, throwaway PostgreSQL and is skipped unless
+`TEST_DATABASE_URL` is set (see the file header for a one-line Docker command).

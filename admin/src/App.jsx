@@ -10,9 +10,12 @@ import {
   Clock,
   Download,
   Inbox,
+  BookOpen,
   KeyRound,
   LayoutDashboard,
   Lock,
+  Smartphone,
+  UserRound,
   LogOut,
   Menu,
   MessagesSquare,
@@ -31,7 +34,10 @@ import {
   X,
 } from 'lucide-react';
 import { toast as notify } from 'react-toastify';
+import CompanyWhatsApp from './components/CompanyWhatsApp';
 import Conversations from './components/Conversations';
+import GateValidator from './components/GateValidator';
+import KnowledgeBase from './components/KnowledgeBase';
 import LoginScreen from './components/LoginScreen';
 import ScreenLoader from './components/ScreenLoader';
 import api, { getAdminToken, setAdminToken } from './api/client';
@@ -45,11 +51,27 @@ const TITLES = {
   passes: ['QR & Passes', 'Every access pass issued'],
   conversations: ['Conversations', 'Full WhatsApp threads with visitors'],
   hosts: ['Hosts', 'People and departments visitors can book'],
-  accounts: ['Client accounts', 'Portal logins for staff'],
+  knowledge: ['Knowledge base', 'What the WhatsApp assistant knows about the organisation'],
+  gate: ['Gate', 'Check visitors in and see who is expected today'],
   reports: ['Reports', 'Totals and exportable records'],
   audit: ['Audit log', 'Full history of system actions'],
-  settings: ['Settings', 'Organisation details and preferences'],
+  admins: ['Sub-admins', 'Who can sign in to this panel, and what they can do'],
+  whatsapp: ['WhatsApp', 'The organisation’s WhatsApp number'],
+  settings: ['Settings', 'Organisation details'],
+  account: ['My account', 'Your profile, password and language'],
 };
+
+// Which pages each role sees. The server enforces the same rules on every request.
+const STAFF_VIEWS = ['dashboard', 'visitors', 'visits', 'passes', 'conversations', 'hosts', 'knowledge', 'gate', 'reports', 'audit', 'account'];
+const VIEWS_BY_ROLE = {
+  super_admin: [...STAFF_VIEWS, 'admins', 'whatsapp', 'settings'],
+  admin: STAFF_VIEWS,
+  reception: ['gate', 'account'],
+};
+const HOME_VIEW = { super_admin: 'dashboard', admin: 'dashboard', reception: 'gate' };
+
+const ADMIN_ROLES = ['super_admin', 'admin', 'reception'];
+const ROLE_LABEL = { super_admin: 'Super admin', admin: 'Admin', reception: 'Reception' };
 
 const STATUS_LABEL = {
   approved: 'Approved',
@@ -64,8 +86,6 @@ const STATUS_LABEL = {
   inactive: 'Inactive',
   cancelled: 'Cancelled',
 };
-
-const ROLE_OPTIONS = ['Host', 'Security', 'Client Admin'];
 
 function tokenRef(token) {
   if (!token) return '—';
@@ -156,7 +176,7 @@ export default function App() {
   const [aName, setAName] = useState('');
   const [aUser, setAUser] = useState('');
   const [aPass, setAPass] = useState('');
-  const [aRole, setARole] = useState('Host');
+  const [aRole, setARole] = useState('admin');
   const [vName, setVName] = useState('');
   const [vCompany, setVCompany] = useState('');
   const [vHost, setVHost] = useState('');
@@ -177,42 +197,57 @@ export default function App() {
   const [visits, setVisits] = useState([]);
   const [hosts, setHosts] = useState([]);
   const [visitors, setVisitors] = useState([]);
-  const [accounts, setAccounts] = useState([]);
+  const [admins, setAdmins] = useState([]);
   const [audit, setAudit] = useState([]);
   const [pageLoading, setPageLoading] = useState(false);
+
+  const role = me?.role || null;
+  const allowedViews = role ? VIEWS_BY_ROLE[role] || [] : [];
+  const can = (name) => allowedViews.includes(name);
+  const isStaff = role === 'super_admin' || role === 'admin';
 
   function toast(msg, isErr) {
     if (isErr) notify.error(msg);
     else notify.success(msg);
   }
 
+  // Loads only what the signed-in role may see; the server refuses anything else.
   async function fetchAll({ silent = false } = {}) {
     if (!silent) setPageLoading(true);
     try {
-      const [v, h, vis, a, au, s, m] = await Promise.all([
-        api.get('/visits'),
-        api.get('/hosts'),
-        api.get('/visitors'),
-        api.get('/accounts'),
-        api.get('/audit'),
-        api.get('/settings').catch(() => ({ data: {} })),
-        api.get('/auth/me').catch(() => ({ data: null })),
-      ]);
-      setMe(m.data);
-      setVisits(v.data || []);
-      setHosts(h.data || []);
-      setVisitors(vis.data || []);
-      setAccounts(a.data || []);
-      setAudit(au.data || []);
-      if (s.data?.orgName) setSetOrgName(s.data.orgName);
-      if (s.data?.phone) setSetPhone(s.data.phone);
-      if (s.data?.email) setSetEmail(s.data.email);
-    } catch {
+      const { data: who } = await api.get('/auth/me');
+      setMe(who);
+      if (who.role === 'super_admin' || who.role === 'admin') {
+        const [v, h, vis, au, s, ad] = await Promise.all([
+          api.get('/visits'),
+          api.get('/hosts'),
+          api.get('/visitors'),
+          api.get('/audit'),
+          api.get('/settings').catch(() => ({ data: {} })),
+          who.role === 'super_admin' ? api.get('/admins') : Promise.resolve({ data: [] }),
+        ]);
+        setVisits(v.data || []);
+        setHosts(h.data || []);
+        setVisitors(vis.data || []);
+        setAudit(au.data || []);
+        setAdmins(ad.data || []);
+        if (s.data?.orgName) setSetOrgName(s.data.orgName);
+        if (s.data?.phone) setSetPhone(s.data.phone);
+        if (s.data?.email) setSetEmail(s.data.email);
+      }
+    } catch (err) {
+      // A session that has ended (password changed, blocked, deleted) goes back to the login screen.
+      if (err.response?.status === 401) return doLogout();
       toast(t('Could not load data from the server'), true);
     } finally {
       if (!silent) setPageLoading(false);
     }
   }
+
+  // Land on the role's home page, and never stay on a page the role cannot open.
+  useEffect(() => {
+    if (role && !VIEWS_BY_ROLE[role]?.includes(view)) setView(HOME_VIEW[role] || 'account');
+  }, [role]);
 
   useEffect(() => {
     if (getAdminToken() && sessionStorage.getItem('botho_admin_in') === '1') setLoggedIn(true);
@@ -258,8 +293,10 @@ export default function App() {
 
   const blockHost = (id) => run(() => api.patch(`/hosts/${id}/block`), t('Host blocked'), t('Could not block host'));
   const unblockHost = (id) => run(() => api.patch(`/hosts/${id}/unblock`), t('Host unblocked'), t('Could not unblock host'));
-  const blockAccount = (id) => run(() => api.patch(`/accounts/${id}/block`), t('Account blocked'), t('Could not block account'));
-  const unblockAccount = (id) => run(() => api.patch(`/accounts/${id}/unblock`), t('Account unblocked'), t('Could not unblock account'));
+  const blockAdmin = (id) => run(() => api.patch(`/admins/${id}/block`), t('Sub-admin blocked'), t('Could not block this sub-admin'));
+  const unblockAdmin = (id) => run(() => api.patch(`/admins/${id}/unblock`), t('Sub-admin unblocked'), t('Could not unblock this sub-admin'));
+  const changeAdminRole = (id, newRole) =>
+    run(() => api.patch(`/admins/${id}/role`, { role: newRole }), t('Role updated'), t('Could not change the role'));
   const revokePass = (id) => run(() => api.post(`/passes/${id}/revoke`), t('Pass revoked'), t('Could not revoke pass'));
 
   function deleteHost(id, name) {
@@ -267,9 +304,9 @@ export default function App() {
     run(() => api.delete(`/hosts/${id}`, { data: { confirm: true } }), t('Host deleted'), t('Could not delete host'));
   }
 
-  function deleteAccount(id, name) {
-    if (!window.confirm(t('Delete account {name}? This cannot be undone.', { name }))) return;
-    run(() => api.delete(`/accounts/${id}`, { data: { confirm: true } }), t('Account deleted'), t('Could not delete account'));
+  function deleteAdmin(id, name) {
+    if (!window.confirm(t('Delete sub-admin {name}? This cannot be undone.', { name }))) return;
+    run(() => api.delete(`/admins/${id}`, { data: { confirm: true } }), t('Sub-admin deleted'), t('Could not delete this sub-admin'));
   }
 
   function decideVisit(id, decision) {
@@ -320,21 +357,26 @@ export default function App() {
     }
   }
 
-  async function saveAccount() {
+  async function saveAdmin() {
     if (!aName.trim() || !aUser.trim() || !aPass) {
       toast(t('Please fill in every field'), true);
       return;
     }
+    if (aPass.length < 10) {
+      toast(t('The new password must be at least 10 characters.'), true);
+      return;
+    }
     try {
-      await api.post('/accounts', { name: aName.trim(), username: aUser.trim(), password: aPass, role: aRole });
+      await api.post('/admins', { name: aName.trim(), username: aUser.trim(), password: aPass, role: aRole });
       closeModal();
       setAName('');
       setAUser('');
       setAPass('');
+      setARole('admin');
       await fetchAll({ silent: true });
-      toast(t('Account created'));
+      toast(t('Sub-admin created'));
     } catch (err) {
-      toast(err.response?.data?.error || t('Could not create account'), true);
+      toast(err.response?.data?.error || t('Could not create this sub-admin'), true);
     }
   }
 
@@ -380,7 +422,7 @@ export default function App() {
     setModal('resetModal');
   }
 
-  async function resetAccountPassword() {
+  async function resetAdminPassword() {
     if (resetPass.length < 10) {
       toast(t('The new password must be at least 10 characters.'), true);
       return;
@@ -390,7 +432,7 @@ export default function App() {
       return;
     }
     try {
-      await api.post(`/accounts/${resetTarget.id}/password`, { newPassword: resetPass, confirmPassword: resetConfirm });
+      await api.post(`/admins/${resetTarget.id}/password`, { newPassword: resetPass, confirmPassword: resetConfirm });
       closeModal();
       setResetPass('');
       setResetConfirm('');
@@ -430,7 +472,7 @@ export default function App() {
     .filter((v) => matches(q, v.ref, v.visitor, v.company, v.host, v.purpose));
   const shownPasses = approved.filter((v) => matches(q, v.ref, v.visitor, v.pin));
   const shownHosts = hosts.filter((h) => matches(q, h.name, h.dept, h.phone));
-  const shownAccounts = accounts.filter((a) => matches(q, a.name, a.username, a.role));
+  const shownAdmins = admins.filter((a) => matches(q, a.name, a.username, t(ROLE_LABEL[a.role] || a.role)));
   const shownAudit = audit.filter((a) => matches(q, a.actor, a.action, a.details));
 
   const depts = {};
@@ -479,7 +521,7 @@ export default function App() {
     setModal('detailModal');
   }
 
-  const [title, sub] = TITLES[view];
+  const [title, sub] = TITLES[view] || TITLES.account;
 
   return (
     <>
@@ -505,38 +547,67 @@ export default function App() {
               {t('Botho Admin')}
             </div>
             <nav className="sb-nav">
-              <NavBtn active={view === 'dashboard'} icon={LayoutDashboard} onClick={() => switchView('dashboard')}>
-                {t('Dashboard')}
-              </NavBtn>
-              <div className="sb-group-label">{t('Visitors')}</div>
-              <NavBtn active={view === 'visitors'} icon={Users} onClick={() => switchView('visitors')}>
-                {t('Visitors')}
-              </NavBtn>
-              <NavBtn active={view === 'visits'} icon={ClipboardList} onClick={() => switchView('visits')} count={pending.length}>
-                {t('Visit requests')}
-              </NavBtn>
-              <NavBtn active={view === 'passes'} icon={QrCode} onClick={() => switchView('passes')}>
-                {t('QR & Passes')}
-              </NavBtn>
-              <NavBtn active={view === 'conversations'} icon={MessagesSquare} onClick={() => switchView('conversations')}>
-                {t('Conversations')}
-              </NavBtn>
-              <div className="sb-group-label">{t('People')}</div>
-              <NavBtn active={view === 'hosts'} icon={UserCheck} onClick={() => switchView('hosts')}>
-                {t('Hosts')}
-              </NavBtn>
-              <NavBtn active={view === 'accounts'} icon={KeyRound} onClick={() => switchView('accounts')}>
-                {t('Client accounts')}
-              </NavBtn>
-              <div className="sb-group-label">{t('Insights')}</div>
-              <NavBtn active={view === 'reports'} icon={BarChart3} onClick={() => switchView('reports')}>
-                {t('Reports')}
-              </NavBtn>
-              <NavBtn active={view === 'audit'} icon={ScrollText} onClick={() => switchView('audit')}>
-                {t('Audit log')}
-              </NavBtn>
-              <NavBtn active={view === 'settings'} icon={Settings} onClick={() => switchView('settings')}>
-                {t('Settings')}
+              {can('dashboard') ? (
+                <NavBtn active={view === 'dashboard'} icon={LayoutDashboard} onClick={() => switchView('dashboard')}>
+                  {t('Dashboard')}
+                </NavBtn>
+              ) : null}
+              {isStaff ? (
+                <>
+                  <div className="sb-group-label">{t('Visitors')}</div>
+                  <NavBtn active={view === 'visitors'} icon={Users} onClick={() => switchView('visitors')}>
+                    {t('Visitors')}
+                  </NavBtn>
+                  <NavBtn active={view === 'visits'} icon={ClipboardList} onClick={() => switchView('visits')} count={pending.length}>
+                    {t('Visit requests')}
+                  </NavBtn>
+                  <NavBtn active={view === 'passes'} icon={QrCode} onClick={() => switchView('passes')}>
+                    {t('QR & Passes')}
+                  </NavBtn>
+                  <NavBtn active={view === 'conversations'} icon={MessagesSquare} onClick={() => switchView('conversations')}>
+                    {t('Conversations')}
+                  </NavBtn>
+                </>
+              ) : null}
+              {can('gate') ? (
+                <NavBtn active={view === 'gate'} icon={ScanLine} onClick={() => switchView('gate')}>
+                  {t('Gate')}
+                </NavBtn>
+              ) : null}
+              {isStaff ? (
+                <>
+                  <div className="sb-group-label">{t('Organisation')}</div>
+                  <NavBtn active={view === 'hosts'} icon={UserCheck} onClick={() => switchView('hosts')}>
+                    {t('Hosts')}
+                  </NavBtn>
+                  <NavBtn active={view === 'knowledge'} icon={BookOpen} onClick={() => switchView('knowledge')}>
+                    {t('Knowledge base')}
+                  </NavBtn>
+                  <div className="sb-group-label">{t('Insights')}</div>
+                  <NavBtn active={view === 'reports'} icon={BarChart3} onClick={() => switchView('reports')}>
+                    {t('Reports')}
+                  </NavBtn>
+                  <NavBtn active={view === 'audit'} icon={ScrollText} onClick={() => switchView('audit')}>
+                    {t('Audit log')}
+                  </NavBtn>
+                </>
+              ) : null}
+              {role === 'super_admin' ? (
+                <>
+                  <div className="sb-group-label">{t('Administration')}</div>
+                  <NavBtn active={view === 'admins'} icon={KeyRound} onClick={() => switchView('admins')}>
+                    {t('Sub-admins')}
+                  </NavBtn>
+                  <NavBtn active={view === 'whatsapp'} icon={Smartphone} onClick={() => switchView('whatsapp')}>
+                    {t('WhatsApp')}
+                  </NavBtn>
+                  <NavBtn active={view === 'settings'} icon={Settings} onClick={() => switchView('settings')}>
+                    {t('Settings')}
+                  </NavBtn>
+                </>
+              ) : null}
+              <NavBtn active={view === 'account'} icon={UserRound} onClick={() => switchView('account')}>
+                {t('My account')}
               </NavBtn>
             </nav>
             <div className="sb-foot">
@@ -544,7 +615,7 @@ export default function App() {
                 <div className="sb-avatar"></div>
                 <div>
                   <b>{me?.name || ''}</b>
-                  <span>{me?.username ? `@${me.username}` : ''}</span>
+                  <span>{role ? t(ROLE_LABEL[role]) : ''}</span>
                 </div>
               </div>
               <button className="sb-logout" onClick={doLogout}>
@@ -566,20 +637,22 @@ export default function App() {
                 </div>
               </div>
               <div className="top-actions">
-                <div className="search-box">
-                  <Search size={16} strokeWidth={2} />
-                  <input
-                    placeholder={t('Search visitors, hosts, references…')}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    aria-label={t('Search')}
-                  />
-                  {query ? (
-                    <button className="search-clear" type="button" onClick={() => setQuery('')} aria-label={t('Clear search')}>
-                      <X size={14} />
-                    </button>
-                  ) : null}
-                </div>
+                {isStaff ? (
+                  <div className="search-box">
+                    <Search size={16} strokeWidth={2} />
+                    <input
+                      placeholder={t('Search visitors, hosts, references…')}
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      aria-label={t('Search')}
+                    />
+                    {query ? (
+                      <button className="search-clear" type="button" onClick={() => setQuery('')} aria-label={t('Clear search')}>
+                        <X size={14} />
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <LanguageSwitch />
               </div>
             </div>
@@ -1048,7 +1121,7 @@ export default function App() {
                 </div>
               </section>
 
-              <section className={'view' + (view === 'accounts' ? ' active' : '')}>
+              <section className={'view' + (view === 'admins' ? ' active' : '')}>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -1056,12 +1129,12 @@ export default function App() {
                         <KeyRound size={16} strokeWidth={2} />
                       </span>
                       <div>
-                        <h3>{t('Client Portal accounts')}</h3>
-                        <p>{t('Create the username and password staff use to sign in to the Client Portal')}</p>
+                        <h3>{t('Sub-admins')}</h3>
+                        <p>{t('Super admins manage everything. Admins run daily operations. Reception uses the gate only.')}</p>
                       </div>
                     </div>
-                    <button className="btn btn-violet btn-sm" onClick={() => setModal('accountModal')}>
-                      <UserPlus size={14} strokeWidth={2.4} /> {t('Create account')}
+                    <button className="btn btn-violet btn-sm" onClick={() => setModal('adminModal')}>
+                      <UserPlus size={14} strokeWidth={2.4} /> {t('Add sub-admin')}
                     </button>
                   </div>
                   <div className="table-wrap">
@@ -1077,51 +1150,87 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {shownAccounts.length ? (
-                          shownAccounts.map((a) => (
-                            <tr key={a.id}>
-                              <td className="cell-main" data-label={t('Name')}>
-                                {a.name}
-                              </td>
-                              <td data-label={t('Username')}>{a.username}</td>
-                              <td data-label={t('Role')}>{t(a.role)}</td>
-                              <td data-label={t('Created')}>{a.created}</td>
-                              <td data-label={t('Status')}>
-                                <Badge status={a.status} />
-                              </td>
-                              <td data-label={t('Actions')}>
-                                <div className="row-actions">
-                                  {a.status === 'blocked' ? (
-                                    <button className="btn btn-sm btn-ghost" onClick={() => unblockAccount(a.id)}>
-                                      {t('Unblock')}
-                                    </button>
+                        {shownAdmins.length ? (
+                          shownAdmins.map((a) => {
+                            const self = me?.username === a.username;
+                            return (
+                              <tr key={a.id}>
+                                <td className="cell-main" data-label={t('Name')}>
+                                  {a.name}
+                                  {self ? <div className="cell-sub">{t('You')}</div> : null}
+                                </td>
+                                <td data-label={t('Username')}>{a.username}</td>
+                                <td data-label={t('Role')}>
+                                  {self ? (
+                                    t(ROLE_LABEL[a.role])
                                   ) : (
-                                    <button className="btn btn-sm btn-ghost" onClick={() => blockAccount(a.id)}>
-                                      {t('Block')}
-                                    </button>
+                                    <select
+                                      className="filter-select"
+                                      value={a.role}
+                                      onChange={(e) => changeAdminRole(a.id, e.target.value)}
+                                      aria-label={t('Role')}
+                                    >
+                                      {ADMIN_ROLES.map((r) => (
+                                        <option key={r} value={r}>
+                                          {t(ROLE_LABEL[r])}
+                                        </option>
+                                      ))}
+                                    </select>
                                   )}
-                                  <button className="btn btn-sm btn-ghost" onClick={() => openReset(a)}>
-                                    {t('Reset password')}
-                                  </button>
-                                  <button className="btn btn-sm btn-danger" onClick={() => deleteAccount(a.id, a.name)}>
-                                    {t('Delete')}
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
+                                </td>
+                                <td data-label={t('Created')}>{a.created}</td>
+                                <td data-label={t('Status')}>
+                                  <Badge status={a.status} />
+                                </td>
+                                <td data-label={t('Actions')}>
+                                  {self ? (
+                                    <span className="cell-sub">{t('Change your own password in My account')}</span>
+                                  ) : (
+                                    <div className="row-actions">
+                                      {a.status === 'blocked' ? (
+                                        <button className="btn btn-sm btn-ghost" onClick={() => unblockAdmin(a.id)}>
+                                          {t('Unblock')}
+                                        </button>
+                                      ) : (
+                                        <button className="btn btn-sm btn-ghost" onClick={() => blockAdmin(a.id)}>
+                                          {t('Block')}
+                                        </button>
+                                      )}
+                                      <button className="btn btn-sm btn-ghost" onClick={() => openReset(a)}>
+                                        {t('Reset password')}
+                                      </button>
+                                      <button className="btn btn-sm btn-danger" onClick={() => deleteAdmin(a.id, a.name)}>
+                                        {t('Delete')}
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
                         ) : (
                           <tr>
                             <td colSpan="6" className="empty">
-                              <EmptyState icon={KeyRound}>{t('No accounts yet — create the first one')}</EmptyState>
+                              <EmptyState icon={KeyRound}>{t('No sub-admins yet')}</EmptyState>
                             </td>
                           </tr>
                         )}
                       </tbody>
                     </table>
                   </div>
-                  <p className="mini-note">{t('Share the username and password with the staff member so they can sign in to the Client Portal.')}</p>
                 </div>
+              </section>
+
+              <section className={'view' + (view === 'knowledge' ? ' active' : '')}>
+                {view === 'knowledge' ? <KnowledgeBase onToast={toast} /> : null}
+              </section>
+
+              <section className={'view' + (view === 'gate' ? ' active' : '')}>
+                {view === 'gate' ? <GateValidator onToast={toast} /> : null}
+              </section>
+
+              <section className={'view' + (view === 'whatsapp' ? ' active' : '')}>
+                {view === 'whatsapp' ? <CompanyWhatsApp onToast={toast} /> : null}
               </section>
 
               <section className={'view' + (view === 'reports' ? ' active' : '')}>
@@ -1306,6 +1415,36 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+              </section>
+
+              <section className={'view' + (view === 'account' ? ' active' : '')}>
+                <div className="panel">
+                  <div className="panel-head">
+                    <div className="panel-title">
+                      <span className="panel-ic">
+                        <UserRound size={16} strokeWidth={2} />
+                      </span>
+                      <div>
+                        <h3>{t('Your profile')}</h3>
+                        <p>{t('Your name and role are managed by a super admin.')}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="form-grid">
+                    <div className="f-field">
+                      <label htmlFor="meName">{t('Name')}</label>
+                      <input id="meName" value={me?.name || ''} readOnly disabled />
+                    </div>
+                    <div className="f-field">
+                      <label htmlFor="meUser">{t('Username')}</label>
+                      <input id="meUser" value={me?.username || ''} readOnly disabled />
+                    </div>
+                    <div className="f-field">
+                      <label htmlFor="meRole">{t('Role')}</label>
+                      <input id="meRole" value={role ? t(ROLE_LABEL[role]) : ''} readOnly disabled />
+                    </div>
+                  </div>
+                </div>
                 <div className="panel">
                   <div className="panel-head">
                     <div className="panel-title">
@@ -1414,10 +1553,10 @@ export default function App() {
         </div>
       </div>
 
-      <div className={'modal-bg' + (modal === 'accountModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
-        <div className="modal" role="dialog" aria-modal="true" aria-label={t('Create account')}>
+      <div className={'modal-bg' + (modal === 'adminModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
+        <div className="modal" role="dialog" aria-modal="true" aria-label={t('Add sub-admin')}>
           <div className="modal-head">
-            <h3>{t('Create account')}</h3>
+            <h3>{t('Add sub-admin')}</h3>
             <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
               <X size={14} strokeWidth={2.2} />
             </button>
@@ -1425,22 +1564,29 @@ export default function App() {
           <div className="form-grid full">
             <div className="f-field">
               <label htmlFor="aName">{t('Name')}</label>
-              <input id="aName" placeholder="Michael Ntsima" value={aName} onChange={(e) => setAName(e.target.value)} />
+              <input id="aName" value={aName} onChange={(e) => setAName(e.target.value)} />
             </div>
             <div className="f-field">
               <label htmlFor="aUser">{t('Username')}</label>
-              <input id="aUser" placeholder="michael.n" value={aUser} onChange={(e) => setAUser(e.target.value)} />
+              <input id="aUser" autoComplete="off" value={aUser} onChange={(e) => setAUser(e.target.value)} />
             </div>
             <div className="f-field">
               <label htmlFor="aPass">{t('Password')}</label>
-              <input id="aPass" type="text" placeholder={t('Set a password')} value={aPass} onChange={(e) => setAPass(e.target.value)} />
+              <input
+                id="aPass"
+                type="password"
+                autoComplete="new-password"
+                placeholder={t('At least 10 characters')}
+                value={aPass}
+                onChange={(e) => setAPass(e.target.value)}
+              />
             </div>
             <div className="f-field">
               <label htmlFor="aRole">{t('Role')}</label>
               <select id="aRole" value={aRole} onChange={(e) => setARole(e.target.value)}>
-                {ROLE_OPTIONS.map((r) => (
+                {ADMIN_ROLES.map((r) => (
                   <option key={r} value={r}>
-                    {t(r)}
+                    {t(ROLE_LABEL[r])}
                   </option>
                 ))}
               </select>
@@ -1450,8 +1596,8 @@ export default function App() {
             <button className="btn btn-ghost" onClick={closeModal}>
               {t('Cancel')}
             </button>
-            <button className="btn btn-violet" onClick={saveAccount}>
-              {t('Create account')}
+            <button className="btn btn-violet" onClick={saveAdmin}>
+              {t('Add sub-admin')}
             </button>
           </div>
         </div>
@@ -1485,7 +1631,7 @@ export default function App() {
             <button className="btn btn-ghost" onClick={closeModal}>
               {t('Cancel')}
             </button>
-            <button className="btn btn-violet" onClick={resetAccountPassword}>
+            <button className="btn btn-violet" onClick={resetAdminPassword}>
               {t('Reset password')}
             </button>
           </div>

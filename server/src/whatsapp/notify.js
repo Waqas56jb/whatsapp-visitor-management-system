@@ -17,12 +17,6 @@ async function visitorLang(phone) {
   return state?.collected_data?.lang === 'tn' ? 'tn' : 'en';
 }
 
-// Opens the Client Portal sign-in straight on Visit requests (client route /portal).
-export function portalRequestsLink() {
-  const base = String(process.env.CLIENT_PORTAL_URL || process.env.CLIENT_ORIGIN || '').split(',')[0].trim().replace(/\/$/, '');
-  return base ? `${base}/portal` : '';
-}
-
 function visitorPhoneOf(visit) {
   return visit.visitor_phone || visit.visitor_profile_phone || null;
 }
@@ -53,7 +47,6 @@ export async function notifyHostNewVisit(visit) {
     return { sent: false, reason: 'same_phone' };
   }
 
-  const portal = portalRequestsLink();
   const sent = await sendTextToPhone(
     phone,
     [
@@ -67,9 +60,7 @@ export async function notifyHostNewVisit(visit) {
       `Time: ${formatVisitTime(visit.visit_time, 'en')}`,
       `Reference: ${visit.ref_number}`,
       '',
-      portal
-        ? `Please open the Client Portal to approve or reject it:\n${portal}`
-        : 'Please open the Client Portal → Visit requests to approve or reject it.',
+      'This request is awaiting approval.',
     ].join('\n')
   );
   if (!sent) console.error(`Host WhatsApp notify failed for ${visit.host_name} ${phone} ${visit.ref_number}`);
@@ -81,7 +72,6 @@ export async function notifyHostRescheduled(visit, previous) {
   const phone = normalizePhone(host?.phone || visit.host_phone);
   const visitorPhone = normalizePhone(visitorPhoneOf(visit));
   if (!phone || host?.status === 'blocked' || (visitorPhone && phone === visitorPhone)) return { sent: false };
-  const portal = portalRequestsLink();
   const sent = await sendTextToPhone(
     phone,
     [
@@ -93,8 +83,7 @@ export async function notifyHostRescheduled(visit, previous) {
       `Purpose: ${visit.purpose}`,
       `Reference: ${visit.ref_number}`,
       '',
-      'You are free at the new time. Please approve or reject it in the Client Portal:',
-      portal || 'Client Portal → Visit requests',
+      'You are free at the new time. The new time is awaiting approval.',
     ].join('\n')
   );
   return { sent };

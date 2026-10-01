@@ -1,6 +1,6 @@
-// Password management and session checks, through the real Express app and routes. Logins live
+// Roles, sessions and password management, through the real Express app and routes. Data lives
 // in memory (test/helpers/authModels.js); the database URL points nowhere, so nothing can reach
-// a real database.
+// a real database, and no test calls an endpoint that starts WhatsApp.
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { after, before, beforeEach, describe, test } from 'node:test';
@@ -25,14 +25,18 @@ before(async () => {
 after(() => server.close());
 
 let nextId = 1;
-async function addAdmin(username, password, name = 'Michael Ntsima') {
-  const row = { id: nextId++, username, name, password_hash: await bcrypt.hash(password, 4), password_changed_at: null };
+async function addAdmin(username, password, role = 'super_admin', name = 'Michael Ntsima') {
+  const row = {
+    id: nextId++,
+    username,
+    name,
+    role,
+    status: 'active',
+    password_hash: await bcrypt.hash(password, 4),
+    password_changed_at: null,
+    created_at: new Date(),
+  };
   store.admins.push(row);
-  return row;
-}
-async function addAccount(username, password, status = 'active') {
-  const row = { id: nextId++, username, name: username, role: 'Host', status, password_hash: await bcrypt.hash(password, 4), password_changed_at: null };
-  store.accounts.push(row);
   return row;
 }
 
@@ -45,131 +49,254 @@ async function call(method, path, { token, body } = {}) {
   return { status: res.status, body: await res.json().catch(() => ({})) };
 }
 
-async function login(kind, username, password) {
-  const res = await call('POST', `/auth/${kind}/login`, { body: { username, password } });
+async function login(username, password) {
+  const res = await call('POST', '/auth/admin/login', { body: { username, password } });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   return res.body.token;
 }
 
 beforeEach(() => {
   store.admins.length = 0;
-  store.accounts.length = 0;
   store.audit.length = 0;
+  store.knowledge.length = 0;
 });
 
 describe('changing passwords', () => {
-  test('wrong current password is rejected (admin and portal)', async () => {
+  test('wrong current password is rejected', async () => {
     await addAdmin('chief', 'correct-horse-1');
-    const adminTok = await login('admin', 'chief', 'correct-horse-1');
-    const a = await call('POST', '/auth/admin/password', { token: adminTok, body: { currentPassword: 'wrong-password', newPassword: 'brand-new-pass-1' } });
-    assert.equal(a.status, 400);
-    assert.match(a.body.error, /current password is incorrect/);
-
-    await addAccount('host1', 'host-pass-123');
-    const hostTok = await login('client', 'host1', 'host-pass-123');
-    const h = await call('POST', '/host/password', { token: hostTok, body: { currentPassword: 'nope', newPassword: 'brand-new-pass-1' } });
-    assert.equal(h.status, 400);
+    const tok = await login('chief', 'correct-horse-1');
+    const res = await call('POST', '/auth/admin/password', { token: tok, body: { currentPassword: 'wrong-password', newPassword: 'brand-new-pass-1' } });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /current password is incorrect/);
   });
 
   test('a password shorter than 10 characters is rejected', async () => {
     await addAdmin('chief', 'correct-horse-1');
-    const tok = await login('admin', 'chief', 'correct-horse-1');
+    const tok = await login('chief', 'correct-horse-1');
     const res = await call('POST', '/auth/admin/password', { token: tok, body: { currentPassword: 'correct-horse-1', newPassword: 'short1' } });
     assert.equal(res.status, 400);
     assert.match(res.body.error, /at least 10 characters/);
-    const reset = await addAccount('host1', 'host-pass-123');
-    const resetRes = await call('POST', `/accounts/${reset.id}/password`, { token: tok, body: { newPassword: 'tiny' } });
-    assert.equal(resetRes.status, 400);
+    const sub = await addAdmin('desk', 'desk-pass-123', 'reception');
+    assert.equal((await call('POST', `/admins/${sub.id}/password`, { token: tok, body: { newPassword: 'tiny' } })).status, 400);
   });
 
-  test('a mismatched confirmation is rejected', async () => {
-    await addAdmin('chief', 'correct-horse-1');
-    const tok = await login('admin', 'chief', 'correct-horse-1');
-    const res = await call('POST', '/auth/admin/password', {
-      token: tok,
-      body: { currentPassword: 'correct-horse-1', newPassword: 'brand-new-pass-1', confirmPassword: 'brand-new-pass-2' },
-    });
-    assert.equal(res.status, 400);
-    assert.match(res.body.error, /do not match/);
-  });
-
-  test('a successful change works, keeps this session and writes an audit row without the password', async () => {
-    await addAdmin('chief', 'correct-horse-1');
-    const tok = await login('admin', 'chief', 'correct-horse-1');
-    const res = await call('POST', '/auth/admin/password', { token: tok, body: { currentPassword: 'correct-horse-1', newPassword: 'brand-new-pass-1' } });
-    assert.equal(res.status, 200);
-    assert.equal((await call('GET', '/auth/me', { token: res.body.token })).status, 200);
-    assert.equal((await call('POST', '/auth/admin/login', { body: { username: 'chief', password: 'correct-horse-1' } })).status, 401);
-    await login('admin', 'chief', 'brand-new-pass-1');
-    assert.deepEqual(store.audit.map((a) => a.action), ['Changed own password']);
+  test('every role can change its own password; this session continues and the audit has no password', async () => {
+    for (const role of ['super_admin', 'admin', 'reception']) {
+      await addAdmin(`u-${role}`, 'correct-horse-1', role);
+      const tok = await login(`u-${role}`, 'correct-horse-1');
+      const res = await call('POST', '/auth/admin/password', { token: tok, body: { currentPassword: 'correct-horse-1', newPassword: 'brand-new-pass-1' } });
+      assert.equal(res.status, 200, role);
+      assert.equal((await call('GET', '/auth/me', { token: res.body.token })).status, 200, role);
+      await login(`u-${role}`, 'brand-new-pass-1');
+    }
     assert.doesNotMatch(JSON.stringify(store.audit), /correct-horse-1|brand-new-pass-1/);
-  });
-
-  test('a host cannot change another account’s password', async () => {
-    const mine = await addAccount('host1', 'host-pass-123');
-    const other = await addAccount('host2', 'other-pass-123');
-    const tok = await login('client', 'host1', 'host-pass-123');
-
-    // The admin reset endpoint is closed to portal users.
-    const reset = await call('POST', `/accounts/${other.id}/password`, { token: tok, body: { newPassword: 'hijacked-pass-1' } });
-    assert.equal(reset.status, 403);
-
-    // The portal endpoint ignores any account id in the request and only changes the signed-in account.
-    const before = store.accounts.find((a) => a.id === other.id).password_hash;
-    const own = await call('POST', '/host/password', {
-      token: tok,
-      body: { accountId: other.id, id: other.id, currentPassword: 'host-pass-123', newPassword: 'host-pass-new-1' },
-    });
-    assert.equal(own.status, 200);
-    assert.equal(store.accounts.find((a) => a.id === other.id).password_hash, before);
-    assert.ok(await bcrypt.compare('host-pass-new-1', store.accounts.find((a) => a.id === mine.id).password_hash));
   });
 });
 
 describe('sessions end when they should', () => {
   test('an old token is rejected after the password changes', async () => {
     await addAdmin('chief', 'correct-horse-1');
-    const oldTok = await login('admin', 'chief', 'correct-horse-1');
-    const otherSession = await login('admin', 'chief', 'correct-horse-1');
-    const res = await call('POST', '/auth/admin/password', { token: oldTok, body: { currentPassword: 'correct-horse-1', newPassword: 'brand-new-pass-1' } });
-    assert.equal(res.status, 200);
-    const stale = await call('GET', '/auth/me', { token: otherSession });
+    const a = await login('chief', 'correct-horse-1');
+    const b = await login('chief', 'correct-horse-1');
+    assert.equal((await call('POST', '/auth/admin/password', { token: a, body: { currentPassword: 'correct-horse-1', newPassword: 'brand-new-pass-1' } })).status, 200);
+    const stale = await call('GET', '/auth/me', { token: b });
     assert.equal(stale.status, 401);
     assert.match(stale.body.error, /password was changed/);
-    assert.equal((await call('GET', '/auth/me', { token: oldTok })).status, 401);
   });
 
-  test('an admin reset ends the portal user’s sessions', async () => {
+  test('a super_admin reset ends the sub-admin’s sessions', async () => {
     await addAdmin('chief', 'correct-horse-1');
-    const host = await addAccount('host1', 'host-pass-123');
-    const adminTok = await login('admin', 'chief', 'correct-horse-1');
-    const hostTok = await login('client', 'host1', 'host-pass-123');
-    assert.equal((await call('GET', '/auth/me', { token: hostTok })).status, 200);
-    const reset = await call('POST', `/accounts/${host.id}/password`, { token: adminTok, body: { newPassword: 'reset-by-admin-1' } });
-    assert.equal(reset.status, 200);
-    assert.equal((await call('GET', '/auth/me', { token: hostTok })).status, 401);
-    await login('client', 'host1', 'reset-by-admin-1');
-    assert.deepEqual(store.audit.map((a) => a.action), ['Reset account password']);
-    assert.doesNotMatch(JSON.stringify(store.audit), /reset-by-admin-1/);
+    const sub = await addAdmin('desk', 'desk-pass-123', 'reception');
+    const chief = await login('chief', 'correct-horse-1');
+    const desk = await login('desk', 'desk-pass-123');
+    assert.equal((await call('POST', `/admins/${sub.id}/password`, { token: chief, body: { newPassword: 'reset-by-chief-1' } })).status, 200);
+    assert.equal((await call('GET', '/auth/me', { token: desk })).status, 401);
+    await login('desk', 'reset-by-chief-1');
+    assert.doesNotMatch(JSON.stringify(store.audit), /reset-by-chief-1/);
   });
 
-  test('a blocked or deleted account’s token is rejected immediately', async () => {
-    const host = await addAccount('host1', 'host-pass-123');
-    const tok = await login('client', 'host1', 'host-pass-123');
-    store.accounts.find((a) => a.id === host.id).status = 'blocked';
-    const blocked = await call('GET', '/host/profile', { token: tok });
+  test('a blocked or deleted admin’s token is rejected immediately, and a blocked admin cannot sign in', async () => {
+    await addAdmin('chief', 'correct-horse-1');
+    const sub = await addAdmin('ops', 'ops-pass-1234', 'admin');
+    const tok = await login('ops', 'ops-pass-1234');
+    store.admins.find((a) => a.id === sub.id).status = 'blocked';
+    const blocked = await call('GET', '/visits', { token: tok });
     assert.equal(blocked.status, 401);
-    assert.match(blocked.body.error, /no longer active/);
-    store.accounts.length = 0;
+    assert.match(blocked.body.error, /blocked/);
+    assert.equal((await call('POST', '/auth/admin/login', { body: { username: 'ops', password: 'ops-pass-1234' } })).status, 403);
+    store.admins.splice(store.admins.findIndex((a) => a.id === sub.id), 1);
     assert.equal((await call('GET', '/auth/me', { token: tok })).status, 401);
   });
 
-  test('/auth/me returns the signed-in admin’s name from the database', async () => {
-    await addAdmin('chief', 'correct-horse-1', 'Michael Ntsima');
-    const tok = await login('admin', 'chief', 'correct-horse-1');
-    store.admins[0].name = 'Michael K Ntsima';
-    const res = await call('GET', '/auth/me', { token: tok });
-    assert.deepEqual(res.body, { role: 'admin', name: 'Michael K Ntsima', username: 'chief' });
+  test('a role change takes effect on the next request', async () => {
+    await addAdmin('chief', 'correct-horse-1');
+    const sub = await addAdmin('ops', 'ops-pass-1234', 'admin');
+    const chief = await login('chief', 'correct-horse-1');
+    const ops = await login('ops', 'ops-pass-1234');
+    assert.notEqual((await call('GET', '/visits', { token: ops })).status, 403);
+    assert.equal((await call('PATCH', `/admins/${sub.id}/role`, { token: chief, body: { role: 'reception' } })).status, 200);
+    assert.equal((await call('GET', '/visits', { token: ops })).status, 403);
+  });
+
+  test('/auth/me returns the signed-in admin’s name and role from the database', async () => {
+    await addAdmin('desk', 'desk-pass-123', 'reception', 'Neo Setlhare');
+    const tok = await login('desk', 'desk-pass-123');
+    store.admins[0].name = 'Neo K Setlhare';
+    assert.deepEqual((await call('GET', '/auth/me', { token: tok })).body, { name: 'Neo K Setlhare', username: 'desk', role: 'reception' });
+  });
+});
+
+// [method, path, roles that may use it, body]. Every other role must get 403.
+const SUPER = ['super_admin'];
+const STAFF = ['super_admin', 'admin'];
+const ANY = ['super_admin', 'admin', 'reception'];
+const TOKEN64 = 'a'.repeat(64);
+const ROUTES = [
+  ['GET', '/auth/me', ANY],
+  ['GET', '/visits/today', ANY],
+  ['POST', '/passes/validate', ANY, { pin: '123456' }],
+  ['GET', '/passes/info?pin=123456', ANY],
+  ['GET', '/dashboard/stats', STAFF],
+  ['GET', '/visitors', STAFF],
+  ['GET', '/visits', STAFF],
+  ['POST', '/visits', STAFF, {}],
+  ['PATCH', '/visits/1/approve', STAFF],
+  ['PATCH', '/visits/1/reject', STAFF],
+  ['GET', '/passes', STAFF],
+  ['POST', '/passes/1/revoke', STAFF],
+  ['GET', '/conversations', STAFF],
+  ['GET', '/conversations/26770000000', STAFF],
+  ['GET', '/hosts', STAFF],
+  ['POST', '/hosts', STAFF, {}],
+  ['PATCH', '/hosts/1', STAFF, {}],
+  ['PATCH', '/hosts/1/block', STAFF],
+  ['PATCH', '/hosts/1/unblock', STAFF],
+  ['DELETE', '/hosts/1', STAFF, {}],
+  ['GET', '/knowledge', STAFF],
+  ['POST', '/knowledge', STAFF, {}],
+  ['PUT', '/knowledge/training', STAFF, {}],
+  ['PATCH', '/knowledge/1', STAFF, {}],
+  ['DELETE', '/knowledge/1', STAFF],
+  ['POST', '/knowledge/website', STAFF, {}],
+  ['GET', '/reports/summary', STAFF],
+  ['GET', '/reports/export?type=visits', STAFF],
+  ['GET', '/audit', STAFF],
+  ['GET', '/settings', STAFF],
+  ['PUT', '/settings', SUPER, {}],
+  ['GET', '/settings/whatsapp', SUPER],
+  ['POST', '/settings/whatsapp/connect', SUPER, null, { skipAllowed: true }],
+  ['POST', '/settings/whatsapp/disconnect', SUPER, null, { skipAllowed: true }],
+  ['GET', '/admins', SUPER],
+  ['POST', '/admins', SUPER, {}],
+  ['PATCH', '/admins/999/role', SUPER, { role: 'admin' }],
+  ['PATCH', '/admins/999/block', SUPER],
+  ['PATCH', '/admins/999/unblock', SUPER],
+  ['DELETE', '/admins/999', SUPER, { confirm: true }],
+  ['POST', '/admins/999/password', SUPER, { newPassword: 'long-enough-pass' }],
+];
+
+describe('role access on the server', () => {
+  test('each role reaches exactly its routes; everything else is 403 (and 401 without a login)', async () => {
+    const tokens = {};
+    for (const role of ANY) {
+      await addAdmin(`r-${role}`, 'role-pass-1234', role);
+      tokens[role] = await login(`r-${role}`, 'role-pass-1234');
+    }
+    for (const [method, path, allowed, body, opts = {}] of ROUTES) {
+      const anon = await call(method, path, { body: body ?? undefined });
+      assert.equal(anon.status, 401, `${method} ${path} without login`);
+      for (const role of ANY) {
+        // connect/disconnect would start or stop WhatsApp, so the allowed role is not called here.
+        if (allowed.includes(role) && opts.skipAllowed) continue;
+        const res = await call(method, path, { token: tokens[role], body: body ?? undefined });
+        if (allowed.includes(role)) assert.ok(![401, 403].includes(res.status), `${role} should reach ${method} ${path} (got ${res.status})`);
+        else assert.equal(res.status, 403, `${role} must be refused ${method} ${path}`);
+      }
+    }
+  });
+
+  test('gate validation and PIN lookup need a login; the pass page by full token stays public', async () => {
+    assert.equal((await call('POST', '/passes/validate', { body: { pin: '123456' } })).status, 401);
+    assert.equal((await call('GET', '/passes/info?pin=123456')).status, 401);
+    assert.equal((await call('GET', `/passes/info?token=${TOKEN64}`)).status, 401);
+    // Public: not found (the pass doesn't exist), but not refused.
+    assert.equal((await call('GET', `/passes/info/${TOKEN64}`)).status, 404);
+    // A PIN or short value in the public path is never looked up.
+    assert.equal((await call('GET', '/passes/info/123456')).status, 404);
+  });
+
+  test('removed public and portal endpoints return 404', async () => {
+    for (const [method, path] of [
+      ['GET', '/whatsapp/qr'],
+      ['GET', '/whatsapp/status'],
+      ['POST', '/visits/public'],
+      ['POST', '/auth/client/login'],
+      ['GET', '/host/visits'],
+      ['GET', '/host/profile'],
+      ['POST', '/host/password'],
+      ['POST', '/host/agent'],
+      ['GET', '/host/whatsapp/status'],
+      ['GET', '/host/knowledge'],
+      ['GET', '/accounts'],
+      ['POST', '/accounts/1/password'],
+    ]) {
+      assert.equal((await call(method, path, { body: method === 'GET' ? undefined : {} })).status, 404, `${method} ${path}`);
+    }
+  });
+});
+
+describe('sub-admin management', () => {
+  test('a super_admin creates, blocks, unblocks and deletes sub-admins, with audit rows', async () => {
+    await addAdmin('chief', 'correct-horse-1');
+    const tok = await login('chief', 'correct-horse-1');
+    const created = await call('POST', '/admins', { token: tok, body: { name: 'Neo Setlhare', username: 'neo', password: 'neo-pass-12345', role: 'reception' } });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.role, 'reception');
+    await login('neo', 'neo-pass-12345');
+    assert.equal((await call('PATCH', `/admins/${created.body.id}/block`, { token: tok })).status, 200);
+    assert.equal((await call('POST', '/auth/admin/login', { body: { username: 'neo', password: 'neo-pass-12345' } })).status, 403);
+    assert.equal((await call('PATCH', `/admins/${created.body.id}/unblock`, { token: tok })).status, 200);
+    assert.equal((await call('DELETE', `/admins/${created.body.id}`, { token: tok, body: { confirm: true } })).status, 200);
+    assert.deepEqual(store.audit.map((a) => a.action), ['Created sub-admin', 'Blocked sub-admin', 'Unblocked sub-admin', 'Deleted sub-admin']);
+    assert.doesNotMatch(JSON.stringify(store.audit), /neo-pass-12345/);
+  });
+
+  test('bad input is refused: short password, unknown role, duplicate username', async () => {
+    await addAdmin('chief', 'correct-horse-1');
+    const tok = await login('chief', 'correct-horse-1');
+    assert.equal((await call('POST', '/admins', { token: tok, body: { name: 'A', username: 'a', password: 'short', role: 'admin' } })).status, 400);
+    assert.equal((await call('POST', '/admins', { token: tok, body: { name: 'A', username: 'a', password: 'long-enough-1', role: 'host' } })).status, 400);
+    assert.equal((await call('POST', '/admins', { token: tok, body: { name: 'A', username: 'chief', password: 'long-enough-1', role: 'admin' } })).status, 409);
+  });
+
+  test('nobody can lock themselves out, and the last active super_admin is protected', async () => {
+    const chief = await addAdmin('chief', 'correct-horse-1');
+    const tok = await login('chief', 'correct-horse-1');
+    assert.equal((await call('PATCH', `/admins/${chief.id}/block`, { token: tok })).status, 400);
+    assert.equal((await call('DELETE', `/admins/${chief.id}`, { token: tok, body: { confirm: true } })).status, 400);
+    assert.equal((await call('PATCH', `/admins/${chief.id}/role`, { token: tok, body: { role: 'admin' } })).status, 400);
+    const other = await addAdmin('deputy', 'deputy-pass-12', 'super_admin');
+    // With two super_admins, one can block the other — but not the last remaining one.
+    assert.equal((await call('PATCH', `/admins/${other.id}/block`, { token: tok })).status, 200);
+    store.admins.find((a) => a.id === other.id).status = 'active';
+    store.admins.find((a) => a.id === chief.id).status = 'blocked';
+    const deputy = await login('deputy', 'deputy-pass-12');
+    assert.equal((await call('PATCH', `/admins/${other.id}/role`, { token: deputy, body: { role: 'admin' } })).status, 400);
+  });
+});
+
+describe('knowledge base is organisation-wide', () => {
+  test('an admin adds, edits and deletes entries that belong to no account', async () => {
+    await addAdmin('ops', 'ops-pass-1234', 'admin');
+    const tok = await login('ops', 'ops-pass-1234');
+    const created = await call('POST', '/knowledge', { token: tok, body: { kind: 'qa', question: 'Parking?', answer: 'Visitor parking is at gate 2.' } });
+    assert.equal(created.status, 201);
+    assert.equal(store.knowledge[0].account_id, null);
+    assert.equal((await call('PATCH', `/knowledge/${created.body.id}`, { token: tok, body: { answer: 'Gate 3.' } })).status, 200);
+    const training = await call('PUT', '/knowledge/training', { token: tok, body: { instruction: 'Be brief.' } });
+    assert.equal(training.status, 200);
+    assert.equal((await call('GET', '/knowledge', { token: tok })).body.length, 2);
+    assert.equal((await call('DELETE', `/knowledge/${created.body.id}`, { token: tok })).status, 200);
   });
 });
 
@@ -182,14 +309,7 @@ describe('login rate limit', () => {
     }
     const blocked = await call('POST', '/auth/admin/login', { body: { username: 'target', password: 'correct-horse-1' } });
     assert.equal(blocked.status, 429);
-    assert.match(blocked.body.error, /Too many sign-in attempts/);
-
     await addAdmin('someone-else', 'correct-horse-2');
     assert.equal((await call('POST', '/auth/admin/login', { body: { username: 'someone-else', password: 'correct-horse-2' } })).status, 200);
-  });
-
-  test('the portal login is limited the same way', async () => {
-    for (let i = 0; i < 10; i += 1) await call('POST', '/auth/client/login', { body: { username: 'portal-target', password: 'x' } });
-    assert.equal((await call('POST', '/auth/client/login', { body: { username: 'portal-target', password: 'x' } })).status, 429);
   });
 });

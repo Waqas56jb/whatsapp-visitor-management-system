@@ -1,40 +1,34 @@
+// Every route of the single-organisation admin panel API. Roles are enforced here, on the server:
+//   ANY_ROLE    = super_admin, admin, reception
+//   STAFF       = super_admin, admin
+//   SUPER_ADMIN = super_admin
 import { Router } from 'express';
-import { adminLogin, clientLogin } from '../controllers/authController.js';
+import multer from 'multer';
+import { adminLogin } from '../controllers/authController.js';
 import {
   approveVisit,
-  blockAccount,
   blockHost,
-  createAccount,
   createHost,
-  createPublicVisit,
   createVisit,
-  deleteAccount,
   deleteHost,
   exportReport,
   getDashboardStats,
+  getReportsSummary,
   getSettings,
   getVisitor,
-  listAccounts,
   listAudit,
   listHosts,
   listPasses,
+  listTodayVisits,
   listVisitors,
   listVisits,
   rejectVisit,
   revokePass,
-  getReportsSummary,
-  toggleAccount,
-  unblockAccount,
   unblockHost,
   updateHost,
   updateSettings,
 } from '../controllers/adminController.js';
-import {
-  getConversation,
-  listConversations,
-  listHostConversations,
-} from '../controllers/conversationController.js';
-import { hostAgentChat } from '../controllers/agentController.js';
+import { getConversation, listConversations } from '../controllers/conversationController.js';
 import {
   createKnowledge,
   deleteKnowledge,
@@ -44,109 +38,83 @@ import {
   updateKnowledge,
   uploadKnowledge,
 } from '../controllers/knowledgeController.js';
-import multer from 'multer';
+import { changeOwnPassword, me } from '../controllers/passwordController.js';
+import { lookupPassEndpoint, publicPassEndpoint, validatePassEndpoint } from '../controllers/passController.js';
 import {
-  hostWhatsAppConnect,
-  hostWhatsAppDisconnect,
-  hostWhatsAppStatus,
-} from '../controllers/hostWhatsAppController.js';
-import {
-  createCompanyHost,
-  deleteCompanyHost,
-  hostApprove,
-  hostDashboard,
-  hostHistory,
-  hostNotifications,
-  hostPasses,
-  hostProfile,
-  hostReject,
-  hostVisits,
-  listCompanyHosts,
-  updateCompanyHost,
-} from '../controllers/hostController.js';
-import { loginRateLimit, rateLimit, requireAuth } from '../middleware/auth.js';
-import {
-  changeAdminPassword,
-  changeOwnAccountPassword,
-  me,
-  resetAccountPassword,
-} from '../controllers/passwordController.js';
-import { lookupPassEndpoint, validatePassEndpoint } from '../controllers/passController.js';
-import { whatsappQr, whatsappStatus } from '../controllers/whatsappController.js';
+  blockAdmin,
+  changeAdminRole,
+  createAdmin,
+  deleteAdmin,
+  listAdmins,
+  resetAdminPassword,
+  unblockAdmin,
+} from '../controllers/subAdminController.js';
+import { whatsappConnect, whatsappDisconnect, whatsappStatus } from '../controllers/whatsappController.js';
+import { ANY_ROLE, STAFF, SUPER_ADMIN, loginRateLimit, rateLimit, requireAuth } from '../middleware/auth.js';
 
 const knowledgeUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
 });
 
+const anyRole = requireAuth(ANY_ROLE);
+const staff = requireAuth(STAFF);
+const superAdmin = requireAuth(SUPER_ADMIN);
+
 export const router = Router();
 
+// Public
 router.get('/health', (req, res) => res.json({ ok: true, service: 'whatsapp-vms' }));
-
-router.get('/whatsapp/status', whatsappStatus);
-router.get('/whatsapp/qr', whatsappQr);
-
 router.post('/auth/admin/login', loginRateLimit(), adminLogin);
-router.post('/auth/client/login', loginRateLimit(), clientLogin);
-router.get('/auth/me', requireAuth('admin', 'host'), me);
-router.post('/auth/admin/password', requireAuth('admin'), rateLimit({ max: 10 }), changeAdminPassword);
-router.post('/visits/public', rateLimit({ max: 30 }), createPublicVisit);
-router.post('/passes/validate', rateLimit({ max: 20 }), validatePassEndpoint);
-router.get('/passes/info', rateLimit({ max: 40 }), lookupPassEndpoint);
-router.get('/passes/info/:token', rateLimit({ max: 40 }), lookupPassEndpoint);
+// The visitor's pass page: only by the full token in the QR link.
+router.get('/passes/info/:token', rateLimit({ max: 40 }), publicPassEndpoint);
 
-router.get('/dashboard/stats', requireAuth('admin'), getDashboardStats);
-router.get('/visitors', requireAuth('admin'), listVisitors);
-router.get('/visitors/:id', requireAuth('admin'), getVisitor);
-router.get('/visits', requireAuth('admin'), listVisits);
-router.post('/visits', requireAuth('admin'), createVisit);
-router.patch('/visits/:id/approve', requireAuth('admin', 'host'), approveVisit);
-router.patch('/visits/:id/reject', requireAuth('admin', 'host'), rejectVisit);
-router.get('/passes', requireAuth('admin'), listPasses);
-router.post('/passes/:id/revoke', requireAuth('admin'), revokePass);
-router.get('/conversations', requireAuth('admin'), listConversations);
-router.get('/conversations/:phoneNumber', requireAuth('admin', 'host'), getConversation);
-router.get('/hosts', requireAuth('admin'), listHosts);
-router.post('/hosts', requireAuth('admin'), createHost);
-router.patch('/hosts/:id/block', requireAuth('admin'), blockHost);
-router.patch('/hosts/:id/unblock', requireAuth('admin'), unblockHost);
-router.patch('/hosts/:id', requireAuth('admin'), updateHost);
-router.delete('/hosts/:id', requireAuth('admin'), deleteHost);
-router.get('/accounts', requireAuth('admin'), listAccounts);
-router.post('/accounts', requireAuth('admin'), createAccount);
-router.patch('/accounts/:id/toggle', requireAuth('admin'), toggleAccount);
-router.patch('/accounts/:id/block', requireAuth('admin'), blockAccount);
-router.patch('/accounts/:id/unblock', requireAuth('admin'), unblockAccount);
-router.delete('/accounts/:id', requireAuth('admin'), deleteAccount);
-router.post('/accounts/:id/password', requireAuth('admin'), resetAccountPassword);
-router.get('/reports/summary', requireAuth('admin'), getReportsSummary);
-router.get('/reports/export', requireAuth('admin'), exportReport);
-router.get('/audit', requireAuth('admin'), listAudit);
-router.get('/settings', requireAuth('admin'), getSettings);
-router.put('/settings', requireAuth('admin'), updateSettings);
+// Every signed-in role
+router.get('/auth/me', anyRole, me);
+router.post('/auth/admin/password', anyRole, rateLimit({ max: 10 }), changeOwnPassword);
+router.post('/passes/validate', anyRole, rateLimit({ max: 60 }), validatePassEndpoint);
+router.get('/passes/info', anyRole, rateLimit({ max: 120 }), lookupPassEndpoint);
+router.get('/visits/today', anyRole, listTodayVisits);
 
-router.get('/host/dashboard', requireAuth('host'), hostDashboard);
-router.get('/host/visits', requireAuth('host'), hostVisits);
-router.patch('/host/visits/:id/approve', requireAuth('host'), hostApprove);
-router.patch('/host/visits/:id/reject', requireAuth('host'), hostReject);
-router.get('/host/passes', requireAuth('host'), hostPasses);
-router.get('/host/history', requireAuth('host'), hostHistory);
-router.get('/host/notifications', requireAuth('host'), hostNotifications);
-router.get('/host/profile', requireAuth('host'), hostProfile);
-router.post('/host/password', requireAuth('host'), rateLimit({ max: 10 }), changeOwnAccountPassword);
-router.get('/host/staff', requireAuth('host'), listCompanyHosts);
-router.post('/host/staff', requireAuth('host'), createCompanyHost);
-router.patch('/host/staff/:id', requireAuth('host'), updateCompanyHost);
-router.delete('/host/staff/:id', requireAuth('host'), deleteCompanyHost);
-router.get('/host/conversations', requireAuth('host'), listHostConversations);
-router.post('/host/agent', requireAuth('host'), rateLimit({ max: 40 }), hostAgentChat);
-router.get('/host/whatsapp/status', requireAuth('host'), hostWhatsAppStatus);
-router.post('/host/whatsapp/connect', requireAuth('host'), hostWhatsAppConnect);
-router.post('/host/whatsapp/disconnect', requireAuth('host'), hostWhatsAppDisconnect);
-router.get('/host/knowledge', requireAuth('host'), listKnowledge);
-router.put('/host/knowledge/training', requireAuth('host'), saveTraining);
-router.post('/host/knowledge/upload', requireAuth('host'), knowledgeUpload.single('file'), uploadKnowledge);
-router.post('/host/knowledge/website', requireAuth('host'), importWebsite);
-router.post('/host/knowledge', requireAuth('host'), createKnowledge);
-router.patch('/host/knowledge/:id', requireAuth('host'), updateKnowledge);
-router.delete('/host/knowledge/:id', requireAuth('host'), deleteKnowledge);
+// Daily operations: super_admin and admin
+router.get('/dashboard/stats', staff, getDashboardStats);
+router.get('/visitors', staff, listVisitors);
+router.get('/visitors/:id', staff, getVisitor);
+router.get('/visits', staff, listVisits);
+router.post('/visits', staff, createVisit);
+router.patch('/visits/:id/approve', staff, approveVisit);
+router.patch('/visits/:id/reject', staff, rejectVisit);
+router.get('/passes', staff, listPasses);
+router.post('/passes/:id/revoke', staff, revokePass);
+router.get('/conversations', staff, listConversations);
+router.get('/conversations/:phoneNumber', staff, getConversation);
+router.get('/hosts', staff, listHosts);
+router.post('/hosts', staff, createHost);
+router.patch('/hosts/:id/block', staff, blockHost);
+router.patch('/hosts/:id/unblock', staff, unblockHost);
+router.patch('/hosts/:id', staff, updateHost);
+router.delete('/hosts/:id', staff, deleteHost);
+router.get('/knowledge', staff, listKnowledge);
+router.put('/knowledge/training', staff, saveTraining);
+router.post('/knowledge/upload', staff, knowledgeUpload.single('file'), uploadKnowledge);
+router.post('/knowledge/website', staff, importWebsite);
+router.post('/knowledge', staff, createKnowledge);
+router.patch('/knowledge/:id', staff, updateKnowledge);
+router.delete('/knowledge/:id', staff, deleteKnowledge);
+router.get('/reports/summary', staff, getReportsSummary);
+router.get('/reports/export', staff, exportReport);
+router.get('/audit', staff, listAudit);
+router.get('/settings', staff, getSettings);
+
+// super_admin only: settings, the company WhatsApp number, sub-admins
+router.put('/settings', superAdmin, updateSettings);
+router.get('/settings/whatsapp', superAdmin, whatsappStatus);
+router.post('/settings/whatsapp/connect', superAdmin, whatsappConnect);
+router.post('/settings/whatsapp/disconnect', superAdmin, whatsappDisconnect);
+router.get('/admins', superAdmin, listAdmins);
+router.post('/admins', superAdmin, createAdmin);
+router.patch('/admins/:id/role', superAdmin, changeAdminRole);
+router.patch('/admins/:id/block', superAdmin, blockAdmin);
+router.patch('/admins/:id/unblock', superAdmin, unblockAdmin);
+router.delete('/admins/:id', superAdmin, deleteAdmin);
+router.post('/admins/:id/password', superAdmin, resetAdminPassword);

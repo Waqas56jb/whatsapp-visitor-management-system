@@ -224,7 +224,7 @@ function todayStamp() {
   return `${y}-${m}-${day}`;
 }
 
-export async function validatePass({ token, pin }) {
+export async function validatePass({ token, pin, actor = 'Security gate' }) {
   const visit = token
     ? await Visit.findByToken(String(token).trim())
     : pin
@@ -250,7 +250,7 @@ export async function validatePass({ token, pin }) {
   const used = await Visit.markUsed(visit.id);
   const full = await Visit.findById(used.id);
   await Audit.add({
-    actor: 'Security gate',
+    actor,
     action: 'Validated pass',
     details: `${full.ref_number} — ${full.visitor_name}`,
   });

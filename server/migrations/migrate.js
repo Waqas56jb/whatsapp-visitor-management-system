@@ -19,6 +19,7 @@ const files = [
   '008_company_whatsapp.sql',
   '009_visit_type_check.sql',
   '010_password_changed_at.sql',
+  '011_admin_roles_single_org.sql',
 ];
 
 try {

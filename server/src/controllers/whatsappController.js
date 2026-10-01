@@ -1,19 +1,25 @@
-import fs from 'fs';
-import { getQrFilePath, getWhatsAppStatus } from '../whatsapp/connection.js';
+// The organisation's single WhatsApp number: status, linking QR, connect and disconnect.
+// super_admin only (see routes); the QR is never served without a login.
+import { getCompanyWhatsAppStatus, hydrateCompanyCache, startCompanyWhatsApp, stopCompanyWhatsApp } from '../whatsapp/connection.js';
+import { Audit } from '../models/index.js';
 
-export function whatsappStatus(req, res) {
-  res.json(getWhatsAppStatus());
+function actor(req) {
+  return req.user?.name || req.user?.username || 'Super admin';
 }
 
-export function whatsappQr(req, res) {
-  const file = getQrFilePath();
-  const status = getWhatsAppStatus();
-  if (!status.qrAvailable || !fs.existsSync(file)) {
-    return res.status(404).json({
-      error: status.connected
-        ? 'WhatsApp is already linked. No QR is needed.'
-        : 'QR code is not ready yet. Watch the server terminal or try again in a few seconds.',
-    });
-  }
-  res.sendFile(file);
+export async function whatsappStatus(req, res) {
+  await hydrateCompanyCache();
+  res.json(getCompanyWhatsAppStatus(true));
+}
+
+export async function whatsappConnect(req, res) {
+  const status = await startCompanyWhatsApp();
+  await Audit.add({ actor: actor(req), action: 'Started WhatsApp linking', details: 'Company WhatsApp' });
+  res.json(status);
+}
+
+export async function whatsappDisconnect(req, res) {
+  const status = await stopCompanyWhatsApp();
+  await Audit.add({ actor: actor(req), action: 'Disconnected WhatsApp', details: 'Company WhatsApp' });
+  res.json(status);
 }

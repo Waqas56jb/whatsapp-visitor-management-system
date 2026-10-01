@@ -21,13 +21,15 @@ function publicPass(row) {
   };
 }
 
+// Gate check-in (signed-in reception, admin or super_admin).
 export async function validatePassEndpoint(req, res) {
   const token = extractPassToken(req.body.token || req.body.qr || '');
   const pin = String(req.body.pin || '').trim();
   if (!token && !pin) {
     return res.status(400).json({ ok: false, reason: 'missing', error: 'Provide a QR token or PIN' });
   }
-  const result = await validatePass({ token: token || undefined, pin: pin || undefined });
+  const actor = `${req.user?.name || req.user?.username || 'Reception'} (gate)`;
+  const result = await validatePass({ token: token || undefined, pin: pin || undefined, actor });
   if (!result.ok) {
     const status = result.reason === 'not_found' ? 404 : 400;
     return res.status(status).json(result);
@@ -35,11 +37,21 @@ export async function validatePassEndpoint(req, res) {
   res.json(result);
 }
 
+// Gate lookup by token or PIN, without checking the visitor in (signed-in staff only).
 export async function lookupPassEndpoint(req, res) {
-  const token = extractPassToken(req.params.token || req.query.token || '');
+  const token = extractPassToken(req.query.token || '');
   const pin = String(req.query.pin || '').trim();
   if (!token && !pin) return res.status(400).json({ error: 'Invalid pass token or PIN' });
   const row = token ? await Visit.findByToken(token) : await Visit.findByPin(pin);
+  if (!row) return res.status(404).json({ error: 'Pass not found' });
+  res.json(publicPass(row));
+}
+
+// The visitor's own pass page: public, but only by the full 64-character token from the QR link.
+export async function publicPassEndpoint(req, res) {
+  const token = extractPassToken(req.params.token || '');
+  if (!/^[a-f0-9]{64}$/i.test(token)) return res.status(404).json({ error: 'Pass not found' });
+  const row = await Visit.findByToken(token);
   if (!row) return res.status(404).json({ error: 'Pass not found' });
   res.json(publicPass(row));
 }
