@@ -42,6 +42,7 @@ export function freshState(prev = {}) {
     hostOptions: [],
     hostSuggestion: null,
     resumeStage: null,
+    prefilled: [],
     cancelRef: null,
     cancelOptions: [],
     lastRef: prev.lastRef || null,
@@ -71,6 +72,7 @@ export function loadState(data) {
     hostOptions: Array.isArray(data.hostOptions) ? data.hostOptions : [],
     hostSuggestion: data.hostSuggestion && data.hostSuggestion.id ? data.hostSuggestion : null,
     resumeStage: DRAFT_STAGES.includes(data.resumeStage) ? data.resumeStage : null,
+    prefilled: Array.isArray(data.prefilled) ? data.prefilled.filter((f) => ['name', 'company'].includes(f)) : [],
     cancelRef: data.cancelRef || null,
     cancelOptions: Array.isArray(data.cancelOptions) ? data.cancelOptions : [],
     rescheduleRef: data.rescheduleRef || null,
@@ -224,6 +226,31 @@ function resolveHost(state, hosts, query, { explicit }) {
   return explicit ? openHostList(state, hosts, query) : null;
 }
 
+// A returning visitor's name and company come from their visitor record. Returns true when applied.
+function prefillReturning(state, ctx) {
+  const record = ctx.visitor;
+  if (!record?.name) return false;
+  state.slots.name = record.name;
+  state.prefilled = ['name'];
+  if (record.company) {
+    state.slots.company = record.company;
+    state.prefilled.push('company');
+  }
+  return true;
+}
+
+// Starts a new request: the official welcome for a new number, or a short prompt asking only
+// for what is missing when the visitor is already on record.
+function startBooking(state, ctx) {
+  Object.assign(state, freshState(state), { stage: 'collecting', welcomed: true, lang: state.lang, notedKey: state.notedKey });
+  if (prefillReturning(state, ctx)) {
+    state.asked = 'purpose';
+    return t(state.lang, 'welcome.returning', { name: greetingName(state.slots.name) });
+  }
+  state.asked = 'name';
+  return t(state.lang, 'welcome');
+}
+
 // Moves to the next missing field, or to confirmation once everything is filled.
 // Time slots are validated here, so every path (one-liner, step by step, corrections) is covered.
 function advance(state, ctx) {
@@ -279,8 +306,20 @@ function handleCollect(state, raw, ctx) {
   const wasIdle = state.stage === 'idle';
   state.stage = 'collecting';
   const asked = wasIdle ? null : state.asked;
-  const startField = asked || missingField(state.slots) || 'name';
-  const found = extractFields(raw, { today: ctx.today, orgName: ctx.orgName, startField, known: filledMap(state.slots) });
+  // A visitor on record starting a new request: name and company will come from their record,
+  // so the message is read as purpose/host/date/time unless it restates everything.
+  const returning = Boolean(ctx.visitor?.name) && !Object.values(state.slots).some(Boolean);
+  const known = returning
+    ? { ...filledMap(state.slots), name: true, company: Boolean(ctx.visitor.company) }
+    : filledMap(state.slots);
+  const startField = asked || (returning ? 'purpose' : missingField(state.slots)) || 'name';
+  const found = extractFields(raw, {
+    today: ctx.today,
+    orgName: ctx.orgName,
+    startField,
+    known,
+    returning: returning || state.prefilled.length > 0,
+  });
   const anyFound = Object.keys(found).length > 0;
 
   // A short follow-up about something in the company knowledge ("values", "data centre") after a
@@ -304,6 +343,8 @@ function handleCollect(state, raw, ctx) {
     };
   }
 
+  if (returning) prefillReturning(state, ctx);
+
   let hostQuery = found.host || '';
   let explicitHost = Boolean(found.host);
 
@@ -320,8 +361,9 @@ function handleCollect(state, raw, ctx) {
   }
 
   const before = JSON.stringify(state.slots);
-  for (const field of ['name', 'company', 'purpose', 'time']) {
-    if (found[field] && !state.slots[field]) state.slots[field] = found[field];
+  for (const field of ['name', 'company', 'purpose', 'time', 'visitType']) {
+    // Details pre-filled from the visitor record give way to what the visitor actually sends.
+    if (found[field] && (!state.slots[field] || state.prefilled.includes(field))) state.slots[field] = found[field];
   }
   let pastDate = false;
   if (found.date === 'past') pastDate = !state.slots.date;
@@ -348,6 +390,10 @@ function handleCollect(state, raw, ctx) {
     }
     if (wasIdle) {
       state.welcomed = true;
+      if (returning) {
+        state.asked = 'purpose';
+        return { reply: t(state.lang, 'welcome.returning', { name: greetingName(state.slots.name) }) };
+      }
       state.asked = 'name';
       return { reply: t(state.lang, 'welcome') };
     }
@@ -455,8 +501,7 @@ function handleResume(state, raw, ctx) {
     return { reply: currentPrompt(state) || advance(state, ctx) };
   }
   if (/^(2|new|new one|start new|start a new one|a new one|e ntsha|e ntšhwa)[.!]*$/.test(value) || isNo(raw)) {
-    Object.assign(state, freshState(state), { stage: 'collecting', welcomed: true, lang: state.lang, asked: 'name' });
-    return { reply: t(state.lang, 'welcome') };
+    return { reply: startBooking(state, ctx) };
   }
   state.stage = previous;
   return null;
@@ -469,6 +514,7 @@ const CORRECTION_FIELDS = {
   host: 'host', department: 'host', lefapha: 'host',
   date: 'date', day: 'date', letlha: 'date',
   time: 'time', nako: 'time',
+  type: 'visitType', 'visit type': 'visitType', category: 'visitType', mofuta: 'visitType',
 };
 
 function handleConfirm(state, raw, ctx) {
@@ -478,10 +524,10 @@ function handleConfirm(state, raw, ctx) {
   const updates = {};
   let hostQuery = '';
   const correction = raw.match(
-    /^(?:please\s+)?(?:change|update|set|make|fetola)?\s*(?:the\s+|my\s+)?(names?|leina|maina|company|kompone|purpose|reason|maikaelelo|host|department|lefapha|date|day|letlha|time|nako)\s*(?:to|is|should be|:|=|go)?\s+(.+)$/i
+    /^(?:please\s+)?(?:change|update|set|make|fetola)?\s*(?:the\s+|my\s+)?(names?|leina|maina|company|kompone|purpose|reason|maikaelelo|host|department|lefapha|date|day|letlha|time|nako|visit\s+type|type|category|mofuta)\s*(?:to|is|should be|:|=|go)?\s+(.+)$/i
   );
   if (correction) {
-    const field = CORRECTION_FIELDS[correction[1].toLowerCase()];
+    const field = CORRECTION_FIELDS[correction[1].toLowerCase().replace(/\s+/g, ' ')];
     const value = correction[2].trim();
     if (field === 'host') hostQuery = answerForField('host', value, { today: ctx.today }) || value;
     else {
@@ -490,7 +536,7 @@ function handleConfirm(state, raw, ctx) {
     }
   } else {
     const found = extractFields(raw, { today: ctx.today, orgName: ctx.orgName, startField: 'name', known: filledMap(state.slots) });
-    for (const field of ['name', 'company', 'purpose', 'date', 'time']) if (found[field]) updates[field] = found[field];
+    for (const field of ['name', 'company', 'purpose', 'date', 'time', 'visitType']) if (found[field]) updates[field] = found[field];
     if (found.host) hostQuery = found.host;
   }
 
@@ -771,12 +817,24 @@ function existingNote(state, ctx) {
 export function runTurn(
   prevState,
   input,
-  { hosts = [], today = todayStamp(), now = null, orgName = 'Botho Innovations', visits = [], bookings = [], hours = officeHours(), knows = null, visitorName = '' } = {}
+  {
+    hosts = [],
+    today = todayStamp(),
+    now = null,
+    orgName = 'Botho Innovations',
+    visits = [],
+    bookings = [],
+    hours = officeHours(),
+    knows = null,
+    visitorName = '',
+    visitor = null,
+  } = {}
 ) {
   const state = JSON.parse(JSON.stringify(loadState(prevState)));
   const raw = String(input || '').trim();
   state.lang = normalizeLang(detectLanguage(raw) || state.lang);
-  const ctx = { hosts, today, now, orgName, visits, bookings, hours, knows, visitorName };
+  // ctx.visitor = the sender's visitor record ({ name, company }) when their phone is already known.
+  const ctx = { hosts, today, now, orgName, visits, bookings, hours, knows, visitorName, visitor };
   // Every question the visitor asks is remembered as the conversation's topic, so vague
   // follow-ups ("how much?", "values") are understood in context.
   const result = (out) => {
@@ -808,8 +866,11 @@ export function runTurn(
     return result({ reply: knownGreeting(state, ctx) });
   }
 
+  // "new booking": a visitor on record gets the short prompt, a new number the official welcome.
+  if (isNewBooking(raw) && !isGreetingOnly(raw)) return result({ reply: startBooking(state, ctx) });
+
   // The welcome asks for "Names" first, so the next plain reply is treated as the name.
-  if (isGreetingOnly(raw) || isNewBooking(raw)) {
+  if (isGreetingOnly(raw)) {
     const next = freshState(state);
     Object.assign(state, next, { stage: 'collecting', welcomed: true, lang: state.lang, asked: 'name' });
     const note = isGreetingOnly(raw) ? existingNote(state, ctx) : '';

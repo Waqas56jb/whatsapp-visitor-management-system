@@ -100,6 +100,13 @@ function useFormatters() {
   return { date: (value) => formatDate(value ? String(value).slice(0, 10) : value) };
 }
 
+// Small Official / Social label for a visit.
+function TypeTag({ v }) {
+  const { t } = useI18n();
+  const type = v.visitType === 'social' ? 'social' : 'official';
+  return <span className={`ap-type-tag ${type}`}>{t(type === 'social' ? 'Social' : 'Official')}</span>;
+}
+
 function VisitMeta({ v }) {
   const { t } = useI18n();
   const fmt = useFormatters();
@@ -122,6 +129,7 @@ function ReqCard({ v, onDecide, busy }) {
         <div className="ap-avatar-sm">{initials(v.visitor)}</div>
         <div className="ap-req-info">
           <b>{v.visitor}</b>
+          <TypeTag v={v} />
           <VisitMeta v={v} />
         </div>
       </div>
@@ -405,6 +413,7 @@ export default function Portal({ on, currentUser, initialView = 'overview', onBa
                             <div className="ap-avatar-sm">{initials(v.visitor)}</div>
                             <div className="ap-req-info">
                               <b>{v.visitor}</b>
+                              <TypeTag v={v} />
                               <VisitMeta v={v} />
                             </div>
                           </div>
@@ -525,7 +534,10 @@ export default function Portal({ on, currentUser, initialView = 'overview', onBa
                               </div>
                             </td>
                             <td>{v.host}</td>
-                            <td>{v.purpose}</td>
+                            <td>
+                              {v.purpose}
+                              <TypeTag v={v} />
+                            </td>
                             <td className="ap-nowrap">
                               {fmt.date(v.date)} · {v.time}
                             </td>

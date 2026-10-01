@@ -2,10 +2,10 @@
 import { extractDate, extractTime, todayStamp } from '../utils/dateParse.js';
 import { isGreetingOnly, isNo, isYes, looksLikeQuestion } from './lang.js';
 
-export const FIELD_ORDER = ['name', 'company', 'purpose', 'host', 'date', 'time'];
+export const FIELD_ORDER = ['name', 'company', 'purpose', 'host', 'date', 'time', 'visitType'];
 
 export function emptySlots() {
-  return { name: '', company: '', purpose: '', hostId: null, hostName: '', hostDept: '', date: '', time: '' };
+  return { name: '', company: '', purpose: '', hostId: null, hostName: '', hostDept: '', date: '', time: '', visitType: '' };
 }
 
 export function missingField(slots) {
@@ -15,7 +15,31 @@ export function missingField(slots) {
   if (!slots.hostId) return 'host';
   if (!slots.date) return 'date';
   if (!slots.time) return 'time';
+  if (!slots.visitType) return 'visitType';
   return null;
+}
+
+// Official vs social, only when the visitor's own words say so. Both kinds of words → unknown.
+const OFFICIAL_WORDS = /\b(official|officially|business|corporate|work (?:meeting|visit|related)|for work|semmuso|ya tiro|ka ga tiro)\b/i;
+const SOCIAL_WORDS = /\b(social|personal|private|family|friends?|relatives?|ya sebele|losika|leloko|tsala|ditsala|ba lelapa)\b/i;
+
+export function detectVisitType(text) {
+  const value = String(text || '');
+  const official = OFFICIAL_WORDS.test(value);
+  const social = SOCIAL_WORDS.test(value);
+  if (official === social) return '';
+  return official ? 'official' : 'social';
+}
+
+// Only the category word itself ("official", "a social visit"); "business meeting" is a purpose.
+const TYPE_ONLY = /^(?:an?\s+|it'?s\s+(?:an?\s+)?)?(?:official|social|personal|private|semmuso|ya semmuso|ya sebele)(?:\s+(?:visit|ketelo))?[.!]*$/i;
+
+// The reply to "1 for Official, 2 for Social": the number or the word.
+function parseVisitType(text) {
+  const value = String(text || '').trim().toLowerCase().replace(/[.!)]+$/, '');
+  if (/^(1|one|no\.?\s*1|option 1)$/.test(value)) return 'official';
+  if (/^(2|two|no\.?\s*2|option 2)$/.test(value)) return 'social';
+  return detectVisitType(value) || null;
 }
 
 const NAME_WORD = "[A-Za-z][A-Za-z'.\\-]*";
@@ -99,6 +123,7 @@ const LABELS = [
   ['host', /^(?:host(?:\s*name)?|visiting|to\s*see|person\s*to\s*see|department|dept|lefapha|o\s*etela|motho)$/i],
   ['date', /^(?:date|visit\s*date|day|letlha(?:\s*la\s*ketelo)?)$/i],
   ['time', /^(?:time|visit\s*time|arrival\s*time|nako)$/i],
+  ['visitType', /^(?:visit\s*type|type(?:\s*of\s*visit)?|category|mofuta(?:\s*wa\s*ketelo)?)$/i],
 ];
 
 function labeledFields(text) {
@@ -222,7 +247,9 @@ function extractHostQuery(text, orgName = '') {
 }
 
 // Extracts every field it can find. `date` may be 'past'. `host` is a raw query to match against the directory.
-export function extractFields(input, { today = todayStamp(), orgName = '', startField = 'name', known = {} } = {}) {
+// `returning`: name and company are already known from the visitor's record, but a message with
+// three or more plain parts ("John Moeng, UB, project meeting, …") still states them in full.
+export function extractFields(input, { today = todayStamp(), orgName = '', startField = 'name', known = {}, returning = false } = {}) {
   const text = stripGreeting(prep(input));
   const out = {};
   if (!text) return out;
@@ -235,6 +262,7 @@ export function extractFields(input, { today = todayStamp(), orgName = '', start
     if (labeled.host) out.host = cleanValue(labeled.host, 60);
     if (labeled.date) out.date = extractDate(labeled.date, today) || undefined;
     if (labeled.time) out.time = extractTime(labeled.time, { bare: true }) || undefined;
+    out.visitType = (labeled.visitType && parseVisitType(labeled.visitType)) || detectVisitType(text) || undefined;
     for (const key of Object.keys(out)) if (!out[key]) delete out[key];
     return out;
   }
@@ -243,6 +271,8 @@ export function extractFields(input, { today = todayStamp(), orgName = '', start
   const time = extractTime(text);
   if (date) out.date = date;
   if (time) out.time = time;
+  const visitType = detectVisitType(text);
+  if (visitType) out.visitType = visitType;
 
   const name = extractName(text);
   const company = extractCompany(text);
@@ -256,13 +286,19 @@ export function extractFields(input, { today = todayStamp(), orgName = '', start
   const parts = text.split(/\s*[,\n;]+\s*/).map((p) => p.trim()).filter(Boolean);
   if (parts.length >= 2) {
     const dateTimeParts = parts.filter((p) => isDateTimePart(p, today));
-    const freeParts = parts.filter((p) => !isDateTimePart(p, today) && !PATTERN_WORDS.test(p) && p.split(/\s+/).length <= 8);
+    // "official" / "social visit" on its own only states the category, not a name or company.
+    const freeParts = parts.filter(
+      (p) => !isDateTimePart(p, today) && !PATTERN_WORDS.test(p) && !TYPE_ONLY.test(p) && p.split(/\s+/).length <= 8
+    );
     const usePositional =
       freeParts.length >= 2 && (dateTimeParts.length > 0 || freeParts.length >= 3 || ['name', 'company'].includes(startField));
     if (usePositional) {
       const order = ['name', 'company', 'purpose', 'host'];
-      const from = Math.max(0, order.indexOf(startField));
-      const slotsLeft = order.slice(from).filter((f) => !out[f] && !known[f]);
+      const full = returning && freeParts.length >= 3;
+      const from = full ? 0 : Math.max(0, order.indexOf(startField));
+      // A full details message restates name and company even though they are pre-filled.
+      const restated = full ? ['name', 'company'] : [];
+      const slotsLeft = order.slice(from).filter((f) => !out[f] && (restated.includes(f) || !known[f]));
       freeParts.forEach((part, i) => {
         const field = slotsLeft[i];
         if (!field) return;
@@ -321,6 +357,7 @@ export function answerForField(field, input, { today = todayStamp() } = {}) {
     const value = capitalize(cleanValue(stripped, 160));
     return value.length >= 2 ? value : null;
   }
+  if (field === 'visitType') return parseVisitType(raw);
   if (field === 'date') return extractDate(raw, today);
   if (field === 'time') return extractTime(raw, { bare: true });
   if (field === 'host') {

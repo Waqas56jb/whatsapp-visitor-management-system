@@ -1,5 +1,5 @@
 // I/O wrapper around the pure booking engine: loads state, performs actions, persists, replies.
-import { ConversationState, Settings, Visit } from '../models/index.js';
+import { ConversationState, Settings, Visit, Visitor } from '../models/index.js';
 import { listActiveHosts } from '../services/hosts.js';
 import { cancelVisitByVisitor, createPendingVisit, rescheduleVisitByVisitor } from '../services/visits.js';
 import { nowTime, todayStamp } from '../utils/dateParse.js';
@@ -42,7 +42,7 @@ async function bookVisit(state, from) {
       purpose: slots.purpose,
       date: slots.date,
       time: slots.time,
-      visitType: /^personal$/i.test(slots.company) ? 'social' : 'official',
+      visitType: slots.visitType === 'social' ? 'social' : 'official',
       visitorPhone: from,
       actor: slots.name || 'Visitor',
       notify: true,
@@ -111,16 +111,31 @@ export async function handleVisitorWithAgent({ from, text, ctx = {}, replyJid = 
   const sendOpts = { accountId: accountId || null, replyJid: replyJid || ctx.replyJid || null };
   const today = todayStamp();
   const now = nowTime();
-  const [previous, hosts, settings, visits, bookings, chunks] = await Promise.all([
+  const [previous, hosts, settings, visits, bookings, chunks, record] = await Promise.all([
     loadConversation(from),
     listActiveHosts(),
     Settings.get().catch(() => null),
     loadVisitorVisits(from, 5),
     loadOpenBookings(today),
     loadKnowledgeChunks().catch(() => []),
+    Visitor.findByPhone(from).catch(() => null),
   ]);
   const orgName = settings?.org_name || 'Botho Innovations';
-  const engineCtx = { hosts, today, now, orgName, visits, bookings, knows: (value) => knowsAbout(value, chunks), visitorName: visits[0]?.visitorName || '' };
+  // The sender's visitor record pre-fills name and company on a new booking.
+  const visitor = record?.name
+    ? { name: record.name, company: record.company && record.company !== '—' ? record.company : '' }
+    : null;
+  const engineCtx = {
+    hosts,
+    today,
+    now,
+    orgName,
+    visits,
+    bookings,
+    knows: (value) => knowsAbout(value, chunks),
+    visitorName: visitor?.name || visits[0]?.visitorName || '',
+    visitor,
+  };
   let turn = runTurn(previous, text, engineCtx);
 
   // The rule-based parser could not act on this message: let the AI work out which operation the

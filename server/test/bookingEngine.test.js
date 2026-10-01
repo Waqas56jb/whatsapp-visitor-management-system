@@ -24,11 +24,11 @@ const HOSTS_WITH_PROCUREMENT = [
   { id: 11, name: 'Lesego Dintwa', department: 'Procurement', status: 'active' },
 ];
 
-function chat(messages, { hosts = HOSTS, state = null, visits = [], bookings = [], now = null, knows = null, visitorName = '' } = {}) {
+function chat(messages, { hosts = HOSTS, state = null, visits = [], bookings = [], now = null, knows = null, visitorName = '', visitor = null } = {}) {
   const log = [];
   let current = state;
   for (const text of messages) {
-    let { state: next, reply, actions } = runTurn(current, text, { hosts, today: TODAY, now, visits, bookings, knows, visitorName });
+    let { state: next, reply, actions } = runTurn(current, text, { hosts, today: TODAY, now, visits, bookings, knows, visitorName, visitor });
     for (const action of actions) {
       if (action.type === 'book') {
         const booked = afterBooking(
@@ -101,7 +101,7 @@ describe('acceptance tests', () => {
   test('T1 one-message booking', () => {
     const { log } = chat([
       'Hi',
-      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm',
+      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm. Official visit.',
       'Yes',
     ]);
     assert.match(log[0].reply, /^Welcome to Botho Innovations Visitor Management System/);
@@ -136,6 +136,7 @@ describe('acceptance tests', () => {
       'Naledi',
       '25 Sep',
       '10am',
+      '1',
       'yes',
     ]);
     assert.deepEqual(replies.slice(1, 7), [
@@ -144,10 +145,11 @@ describe('acceptance tests', () => {
       'Who would you like to visit? Please share the host name or department.',
       'Which date would you like to visit? For example: 25 September, or tomorrow.',
       'What time will you arrive? For example: 10am, or 15:00.',
-      replies[6],
+      'Is this an official or a social visit? Reply 1 for Official or 2 for Social.',
     ]);
-    assert.match(replies[6], /Host: Naledi Kgosi \(Human Resources\)/);
-    assert.match(replies[7], /submitted/);
+    assert.match(replies[7], /Host: Naledi Kgosi \(Human Resources\)/);
+    assert.match(replies[7], /Visit type: Official$/m);
+    assert.match(replies[8], /submitted/);
     assert.equal(state.stage, 'idle');
   });
 
@@ -159,6 +161,7 @@ describe('acceptance tests', () => {
       'Ke batla go bona Tshepo',
       'Kamoso',
       'ka 10 mo mosong',
+      '2',
       'Ee',
     ]);
     assert.match(replies[0], /^Re a go amogela mo Botho Innovations/);
@@ -166,15 +169,17 @@ describe('acceptance tests', () => {
     assert.equal(replies[2], 'O batla go etela mang? Tsweetswee kwala leina la motho kgotsa la lefapha.');
     assert.match(replies[3], /letlha lefe/);
     assert.match(replies[4], /nako mang/);
-    assert.match(replies[5], /Tsweetswee tlhomamisa/);
-    assert.match(replies[5], /Letlha: Labotlhano, 25 Lwetse 2026\nNako: 10:00/);
-    assert.match(replies[6], /Kopo ya gago ya ketelo e rometswe/);
+    assert.match(replies[5], /^A ke ketelo ya semmuso kgotsa ya sebele\?/);
+    assert.match(replies[6], /Tsweetswee tlhomamisa/);
+    assert.match(replies[6], /Letlha: Labotlhano, 25 Lwetse 2026\nNako: 10:00\nMofuta wa ketelo: Ya sebele/);
+    assert.match(replies[7], /Kopo ya gago ya ketelo e rometswe/);
+    assert.equal(log.at(-1).booked.visitType, 'social');
     assert.equal(log.at(-1).booked.name, 'Kagiso Molefe');
     assert.equal(log.at(-1).booked.company, 'Debswana');
   });
 
   test('T6 new booking after a completed one starts from clean slots', () => {
-    const first = chat(['Hi', 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm', 'Yes']);
+    const first = chat(['Hi', 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm. Official visit.', 'Yes']);
     const { state, replies } = chat(['Hi', 'Ali Raza'], { state: first.state });
     assert.equal(state.slots.name, 'Ali Raza');
     assert.equal(state.slots.company, '');
@@ -208,7 +213,7 @@ describe('guards', () => {
   test('confirmation accepts a correction and re-confirms', () => {
     const { replies, state } = chat([
       'Hi',
-      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm',
+      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm. Official visit.',
       'change time to 11am',
     ]);
     assert.equal(state.slots.time, '11:00');
@@ -239,7 +244,7 @@ describe('guards', () => {
 describe('realistic variations', () => {
   test('rich single sentence', () => {
     const { state } = chat([
-      "Hi, I'm Thabo Kgari from Orange Botswana and I'd like to see Tshepo tomorrow at 9am for a contract review",
+      "Hi, I'm Thabo Kgari from Orange Botswana and I'd like to see Tshepo tomorrow at 9am for a contract review, official visit",
     ]);
     assert.equal(state.slots.name, 'Thabo Kgari');
     assert.equal(state.slots.company, 'Orange Botswana');
@@ -273,7 +278,7 @@ describe('realistic variations', () => {
   test('saying no at confirmation, then correcting the date', () => {
     const { replies, state } = chat([
       'Hi',
-      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm',
+      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm. Official visit.',
       'no',
       'date 26 September',
     ]);
@@ -285,7 +290,7 @@ describe('realistic variations', () => {
   test('changing the host at confirmation', () => {
     const { state } = chat([
       'Hi',
-      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm',
+      'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm. Official visit.',
       'host Naledi',
     ]);
     assert.equal(state.slots.hostId, 2);
@@ -309,7 +314,7 @@ describe('realistic variations', () => {
   });
 
   test('thanks after booking does not restart the flow', () => {
-    const first = chat(['Hi', 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm', 'Yes']);
+    const first = chat(['Hi', 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm. Official visit.', 'Yes']);
     const { replies } = chat(['Thank you'], { state: first.state });
     assert.match(replies[0], /You're welcome/);
   });
@@ -412,6 +417,7 @@ describe('production transcript 25/09 00:02 (questions about an existing request
       'ai consultant',
       'i want to visit AI/ML engineer',
       'yes tomorrow at 4pm',
+      '1',
       'yes',
     ]);
     assert.equal(first.log.at(-1).booked.hostId, 9);
@@ -442,7 +448,7 @@ describe('production transcript 25/09 00:02 (questions about an existing request
   });
 });
 
-const ONE_LINER = 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm';
+const ONE_LINER = 'Waqas Naveed from Astra. I want to consult the AI system. I want to visit Hamza on 25 September at 3 pm. Official visit.';
 const HAMZA_3PM = [{ ref: 'VMS-2026-000900', hostId: 10, date: '2026-09-25', time: '15:00', status: 'approved' }];
 
 describe('30-minute host slots', () => {
@@ -455,7 +461,7 @@ describe('30-minute host slots', () => {
   });
 
   test('2:30 pm is free when 3 pm is booked, 2:45 pm is not', () => {
-    const ok = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', '25 September', '2:30 pm'], { bookings: HAMZA_3PM });
+    const ok = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', '25 September', '2:30 pm', '1'], { bookings: HAMZA_3PM });
     assert.equal(ok.state.stage, 'confirm');
     const clash = chat(['Hi', 'Michael', 'Botho', 'Meeting', 'Hamza', '25 September', '2:45 pm'], { bookings: HAMZA_3PM });
     assert.match(clash.replies.at(-1), /already has a visit at 15:00/);
@@ -813,7 +819,7 @@ describe('2. host matching confidence', () => {
   });
 
   test('a partial department word is confirmed; "yes" with the next answer keeps both', () => {
-    const { state, replies } = chat([...TO_HOST, 'Technology', 'yes tomorrow at 10am']);
+    const { state, replies } = chat([...TO_HOST, 'Technology', 'yes tomorrow at 10am', 'official']);
     assert.equal(replies[4], 'Did you mean Botho Prince (Technology Planning)? Reply yes or no.');
     assert.equal(state.slots.hostId, 4);
     assert.equal(state.slots.date, '2026-09-25');
@@ -900,6 +906,123 @@ describe('4. greeting during a booking', () => {
   test('Setswana', () => {
     const { replies } = chat(['Dumela', 'Kagiso Molefe', 'Dumela']);
     assert.equal(replies[2], 'O na le kopo ya ketelo e e sa ntseng e tswelela. Araba 1 go e tswelela, kgotsa 2 go simolola e ntšhwa.');
+  });
+});
+
+// The sender's visitor record, as loaded by phone number.
+const RECORD = { name: 'Michael Ntsima', company: 'Botho Innovations' };
+const ON_RECORD = { visitor: RECORD, visitorName: RECORD.name };
+const NAME_OR_COMPANY_QUESTION = /May I have your full name|Which company are you visiting from/;
+
+describe('returning visitor pre-fill', () => {
+  test('a known visitor books without being asked name or company', () => {
+    const { replies, log } = chat(['new booking', 'Sales pitch, Hamza, tomorrow, 10am', 'official', 'yes'], ON_RECORD);
+    assert.equal(replies[0], 'Hello Michael Ntsima, please send the details of your visit (Purpose, Who you are visiting, Visit date, Time).');
+    assert.equal(replies[1], 'Is this an official or a social visit? Reply 1 for Official or 2 for Social.');
+    assert.match(replies[2], /^Please confirm your visit details:\nName: Michael Ntsima\nCompany: Botho Innovations\nPurpose: Sales pitch\nHost: Hamza/);
+    for (const r of replies) assert.doesNotMatch(r, NAME_OR_COMPANY_QUESTION);
+    assert.equal(log.at(-1).booked.name, 'Michael Ntsima');
+    assert.equal(log.at(-1).booked.company, 'Botho Innovations');
+  });
+
+  test('details sent straight away (no "new booking") are pre-filled too', () => {
+    const { replies, state } = chat(['I want to see Hamza tomorrow at 10am for a sales meeting'], ON_RECORD);
+    assert.equal(state.slots.name, 'Michael Ntsima');
+    assert.equal(state.slots.company, 'Botho Innovations');
+    assert.equal(replies[0], 'Is this an official or a social visit? Reply 1 for Official or 2 for Social.');
+  });
+
+  test('a known visitor corrects their name at confirmation', () => {
+    const { state, replies, log } = chat(['new booking', 'Sales pitch, Hamza, tomorrow, 10am, official', 'name Michael Ntsima Jr', 'yes'], ON_RECORD);
+    assert.match(replies[2], /Name: Michael Ntsima Jr/);
+    assert.equal(log.at(-1).booked.name, 'Michael Ntsima Jr');
+    assert.equal(state.stage, 'idle');
+  });
+
+  test('a full details message overrides the record and asks nothing twice', () => {
+    const { replies, state } = chat(['new booking', 'John Moeng, University of Botswana, project meeting, Hamza, tomorrow, 10am'], ON_RECORD);
+    assert.equal(state.slots.name, 'John Moeng');
+    assert.equal(state.slots.company, 'University of Botswana');
+    assert.equal(state.slots.purpose, 'Project meeting');
+    assert.equal(state.slots.hostId, 10);
+    assert.equal(replies[1], 'Is this an official or a social visit? Reply 1 for Official or 2 for Social.');
+  });
+
+  test('a record without a company asks only for the company', () => {
+    const { replies } = chat(['new booking', 'Sales pitch, Hamza, tomorrow, 10am'], { visitor: { name: 'Neo Setlhare', company: '' } });
+    assert.equal(replies[1], 'Which company are you visiting from?');
+  });
+
+  test('a greeting still gets the named hello, and new numbers keep the exact welcome', () => {
+    assert.match(chat(['Hi'], ON_RECORD).replies[0], /^Hello Michael Ntsima, how can I help you today\?/);
+    assert.equal(
+      chat(['new booking']).replies[0],
+      'Welcome to Botho Innovations Visitor Management System. Please provide your details (Names, Company, Purpose, Visit date, Time).'
+    );
+  });
+
+  test('Setswana short prompt', () => {
+    const { replies } = chat(['Ke batla kopo e ntsha'], ON_RECORD);
+    assert.equal(replies[0], 'Dumela Michael Ntsima, tsweetswee romela dintlha tsa ketelo ya gago (Maikaelelo, O etela mang, Letlha la ketelo, Nako).');
+  });
+});
+
+describe('visit category', () => {
+  const UP_TO_TIME = ['Hi', 'Michael Ntsima', 'Botho Innovations', 'Meeting', 'Hamza', '25 September', '10am'];
+
+  test('detected from the visitor’s own words', () => {
+    const business = chat(['Hi', 'Michael Ntsima, Botho Innovations, business meeting, Hamza, 25 September, 10am']);
+    assert.equal(business.state.slots.visitType, 'official');
+    assert.equal(business.state.slots.purpose, 'Business meeting');
+    assert.equal(business.state.slots.hostId, 10);
+    assert.equal(chat(['Hi', 'Michael Ntsima, Personal, visiting a friend, Hamza, 25 September, 10am']).state.slots.visitType, 'social');
+    const family = chat(['Hi', 'Michael Ntsima, Botho Innovations, family lunch, Hamza, 25 September, 10am']);
+    assert.equal(family.state.slots.visitType, 'social');
+    assert.equal(family.state.stage, 'confirm');
+  });
+
+  test('asked when not stated, just before confirmation', () => {
+    const { replies, state } = chat(UP_TO_TIME);
+    assert.equal(replies.at(-1), 'Is this an official or a social visit? Reply 1 for Official or 2 for Social.');
+    assert.equal(state.stage, 'collecting');
+    assert.equal(state.asked, 'visitType');
+  });
+
+  test('"1" / "2" and the words are accepted', () => {
+    for (const [answer, type] of [['1', 'official'], ['2', 'social'], ['Official', 'official'], ['social', 'social'], ['personal', 'social'], ['business', 'official']]) {
+      const { state, replies } = chat([...UP_TO_TIME, answer]);
+      assert.equal(state.slots.visitType, type, answer);
+      assert.match(replies.at(-1), new RegExp(`Visit type: ${type === 'social' ? 'Social' : 'Official'}`), answer);
+    }
+  });
+
+  test('anything else is asked again', () => {
+    const { replies, state } = chat([...UP_TO_TIME, 'maybe']);
+    assert.equal(replies.at(-1), 'Please reply 1 for Official or 2 for Social.');
+    assert.equal(state.slots.visitType, '');
+  });
+
+  test('cancel exits and a greeting asks continue or new', () => {
+    assert.match(chat([...UP_TO_TIME, 'cancel']).replies.at(-1), /stopped this booking/);
+    const resumed = chat([...UP_TO_TIME, 'Hi', '1']);
+    assert.match(resumed.replies.at(-2), /^You have a visit request in progress/);
+    assert.equal(resumed.replies.at(-1), 'Is this an official or a social visit? Reply 1 for Official or 2 for Social.');
+  });
+
+  test('can be changed at confirmation', () => {
+    const { state } = chat([...UP_TO_TIME, '1', 'visit type social']);
+    assert.equal(state.slots.visitType, 'social');
+    assert.equal(state.stage, 'confirm');
+  });
+
+  test('Setswana question, answer and summary', () => {
+    const { replies, state } = chat(['Dumela', 'Kagiso Molefe', 'Debswana', 'Kopano', 'Tshepo', 'kamoso', 'ka 10 mo mosong']);
+    assert.equal(replies.at(-1), 'A ke ketelo ya semmuso kgotsa ya sebele? Araba 1 fa e le ya semmuso (Official), kgotsa 2 fa e le ya sebele (Social).');
+    const answered = chat(['ya semmuso'], { state });
+    assert.equal(answered.state.slots.visitType, 'official');
+    assert.match(answered.replies[0], /Mofuta wa ketelo: Ya semmuso/);
+    const retry = chat(['ga ke itse'], { state });
+    assert.equal(retry.replies[0], 'Tsweetswee araba 1 fa e le ketelo ya semmuso, kgotsa 2 fa e le ketelo ya sebele.');
   });
 });
 

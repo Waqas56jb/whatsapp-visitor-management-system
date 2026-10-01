@@ -2,7 +2,7 @@ import { formatDate, formatDateNice } from '../utils/mappers.js';
 import { generateQrBuffer } from '../utils/generateToken.js';
 import { Audit, ConversationState, Host, Settings } from '../models/index.js';
 import { normalizePhone } from '../utils/phone.js';
-import { formatVisitDate, formatVisitTime, t } from './messages.js';
+import { formatVisitDate, formatVisitTime, t, visitTypeLabel } from './messages.js';
 import { sendImage, sendText, sendTextToPhone } from './sendMessage.js';
 
 async function locationLabel() {
@@ -62,6 +62,7 @@ export async function notifyHostNewVisit(visit) {
       `Visitor: ${visit.visitor_name}`,
       `Company: ${visit.visitor_company || '—'}`,
       `Purpose: ${visit.purpose}`,
+      `Visit type: ${visitTypeLabel(visit.visit_type, 'en')}`,
       `Date: ${formatVisitDate(formatDate(visit.visit_date), 'en')}`,
       `Time: ${formatVisitTime(visit.visit_time, 'en')}`,
       `Reference: ${visit.ref_number}`,
@@ -140,6 +141,7 @@ export async function notifyVisitorApproved(visit) {
     host: visit.host_name,
     date: formatVisitDate(formatDate(visit.visit_date), lang),
     time: formatVisitTime(visit.visit_time, lang),
+    type: visitTypeLabel(visit.visit_type, lang),
     location: await locationLabel(),
     pinLine: visit.pin ? t(lang, 'notify.pinLine', { pin: visit.pin }) : '',
   });

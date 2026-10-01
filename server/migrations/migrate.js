@@ -17,6 +17,7 @@ const files = [
   '006_client_whatsapp.sql',
   '007_restore_pin.sql',
   '008_company_whatsapp.sql',
+  '009_visit_type_check.sql',
 ];
 
 try {

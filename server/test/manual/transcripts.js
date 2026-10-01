@@ -11,33 +11,37 @@ process.env.OPENAI_API_KEY = '';
 register('./hooks.js', import.meta.url);
 
 const { handleVisitorWithAgent } = await import('../../src/whatsapp/visitorAgent.js');
+const { notifyHostNewVisit, notifyVisitorApproved } = await import('../../src/whatsapp/notify.js');
 const { store } = await import('./fakes.js');
 const { isGreetingOnly } = await import('../../src/whatsapp/lang.js');
 
 const HOST_LIST_RE = /^1\. (Kabo Majube|Micha Ntsima|Boikarabelo Ramaretlwa)/m;
+const NAME_OR_COMPANY_QUESTION = /May I have your full name|Which company are you visiting from/;
+const TYPE_QUESTION = /^Is this an official or a social visit\? Reply 1 for Official or 2 for Social\.$/m;
 const BULK = 'John Moeng, University of Botswana, project meeting, tomorrow, 10am';
+const MICHAEL = { name: 'Michael Ntsima', company: 'Botho Innovations' };
+
+const booked = (r, hostId, type) =>
+  r.visits.length === 1 && r.visits[0].host_id === hostId && r.visits[0].visit_type === type
+    ? null
+    : `expected one ${type} visit with host #${hostId}`;
 
 const SCENARIOS = [
   {
     id: 'A',
-    title: 'New number, one message, host "Kabo", confirm',
-    messages: ['Hi', BULK, 'Kabo', 'yes'],
+    title: 'New number, one message, host "Kabo", type, confirm',
+    messages: ['Hi', BULK, 'Kabo', '1', 'yes'],
     hostSelectors: ['Kabo'],
     names: ['John Moeng'],
-    expect: (r) => (r.visits.length === 1 && r.visits[0].host_id === 1 ? null : 'expected one visit booked with Kabo Majube'),
+    expect: (r) => (!TYPE_QUESTION.test(r.turns[2].reply) ? 'visit type was not asked' : booked(r, 1, 'official')),
   },
   {
     id: 'B',
     title: 'Ambiguous host "Technology Planning", pick 2',
-    messages: ['Hi', 'John Moeng, University of Botswana, project meeting, Technology Planning, tomorrow, 10am', '2', 'yes'],
+    messages: ['Hi', 'John Moeng, University of Botswana, project meeting, Technology Planning, tomorrow, 10am', '2', '1', 'yes'],
     hostSelectors: ['2'],
     names: ['John Moeng'],
-    expect: (r) =>
-      !HOST_LIST_RE.test(r.turns[1].reply)
-        ? 'the two Technology Planning hosts were not listed'
-        : r.visits.length === 1 && r.visits[0].host_id === 2
-          ? null
-          : 'expected one visit booked with Micha Ntsima',
+    expect: (r) => (!HOST_LIST_RE.test(r.turns[1].reply) ? 'the two Technology Planning hosts were not listed' : booked(r, 2, 'official')),
   },
   {
     id: 'C',
@@ -55,25 +59,25 @@ const SCENARIOS = [
   {
     id: 'D',
     title: 'Fuzzy host "Kabbo Majub", reply no, then "Micha Ntsima"',
-    messages: ['Hi', BULK, 'Kabbo Majub', 'no', 'Micha Ntsima', 'yes'],
+    messages: ['Hi', BULK, 'Kabbo Majub', 'no', 'Micha Ntsima', '2', 'yes'],
     hostSelectors: ['Micha Ntsima'],
     names: ['John Moeng'],
     expect: (r) => {
       if (!/^Did you mean Kabo Majube \(Technology Planning\)\? Reply yes or no\.$/.test(r.turns[2].reply)) return 'no "Did you mean" question';
       if (r.turns[2].state.slots.hostId !== null) return 'fuzzy host was accepted without a yes';
-      return r.visits.length === 1 && r.visits[0].host_id === 2 ? null : 'expected one visit booked with Micha Ntsima';
+      return booked(r, 2, 'social');
     },
   },
   {
     id: 'E',
     title: 'Greeting mid-booking, reply 1, finish',
-    messages: ['Hi', 'Lesedi Tau', 'Debswana', 'Hi', '1', 'Supplier meeting', 'Boikarabelo', 'tomorrow', '11am', 'yes'],
+    messages: ['Hi', 'Lesedi Tau', 'Debswana', 'Hi', '1', 'Supplier meeting', 'Boikarabelo', 'tomorrow', '11am', 'official', 'yes'],
     hostSelectors: ['Boikarabelo'],
     names: ['Lesedi Tau'],
     expect: (r) => {
       if (!/^You have a visit request in progress/.test(r.turns[3].reply)) return 'no continue/new question after "Hi"';
       const v = r.visits[0];
-      return v && v.visitor_name === 'Lesedi Tau' && v.company === 'Debswana' && v.host_id === 3 ? null : 'booking did not keep the details given before "Hi"';
+      return v && v.visitor_name === 'Lesedi Tau' && v.visitor_company === 'Debswana' && v.host_id === 3 ? null : 'booking did not keep the details given before "Hi"';
     },
   },
   {
@@ -114,13 +118,79 @@ const SCENARIOS = [
   {
     id: 'I',
     title: 'Scenario A in Setswana',
-    messages: ['Dumela', 'John Moeng, University of Botswana, kopano ya poroje, kamoso, 10am', 'Kabo', 'Ee'],
+    messages: ['Dumela', 'John Moeng, University of Botswana, kopano ya poroje, kamoso, 10am', 'Kabo', '1', 'Ee'],
     hostSelectors: ['Kabo'],
     names: ['John Moeng'],
     expect: (r) => {
       if (!/^Re a go amogela/.test(r.turns[0].reply)) return 'welcome was not in Setswana';
-      if (!/Kopo ya gago ya ketelo e rometswe/.test(r.turns[3].reply)) return 'submission reply was not in Setswana';
-      return r.visits.length === 1 && r.visits[0].host_id === 1 ? null : 'expected one visit booked with Kabo Majube';
+      if (!/^A ke ketelo ya semmuso kgotsa ya sebele\?/.test(r.turns[2].reply)) return 'visit type was not asked in Setswana';
+      if (!/Kopo ya gago ya ketelo e rometswe/.test(r.turns[4].reply)) return 'submission reply was not in Setswana';
+      return booked(r, 1, 'official');
+    },
+  },
+  {
+    id: 'J',
+    title: 'Known visitor: "new booking" pre-fills name and company',
+    record: MICHAEL,
+    messages: ['new booking', 'Sales pitch, Kabo, tomorrow, 10am', '1', 'yes'],
+    hostSelectors: ['Sales pitch, Kabo, tomorrow, 10am'],
+    names: ['Michael Ntsima'],
+    expect: (r) => {
+      if (r.turns[0].reply !== 'Hello Michael Ntsima, please send the details of your visit (Purpose, Who you are visiting, Visit date, Time).') return 'no short prompt with the name';
+      if (r.turns.some((t) => NAME_OR_COMPANY_QUESTION.test(t.reply))) return 'name or company was asked';
+      if (!/Name: Michael Ntsima\nCompany: Botho Innovations/.test(r.turns[2].reply)) return 'confirmation does not show name and company';
+      return booked(r, 1, 'official');
+    },
+  },
+  {
+    id: 'K',
+    title: 'Known visitor corrects their name at confirmation',
+    record: MICHAEL,
+    messages: ['new booking', 'Sales pitch, Kabo, tomorrow, 10am, official', 'name Michael K. Ntsima', 'yes'],
+    hostSelectors: ['Sales pitch, Kabo, tomorrow, 10am, official'],
+    // Names are stored without dots ("Michael K Ntsima"), as for every visitor.
+    names: ['Michael Ntsima', 'Michael K Ntsima'],
+    expect: (r) => {
+      if (!/Name: Michael K Ntsima/.test(r.turns[2].reply)) return 'correction not shown in the summary';
+      const record = store.visitors.find((v) => v.phone === r.from);
+      return record?.name === 'Michael K Ntsima' ? booked(r, 1, 'official') : 'visitor record was not updated';
+    },
+  },
+  {
+    id: 'L',
+    title: 'Known visitor sends full details anyway',
+    record: MICHAEL,
+    messages: ['new booking', 'John Moeng, University of Botswana, project meeting, Kabo, tomorrow, 10am', 'social', 'yes'],
+    hostSelectors: ['John Moeng, University of Botswana, project meeting, Kabo, tomorrow, 10am'],
+    names: ['Michael Ntsima', 'John Moeng'],
+    expect: (r) => {
+      if (r.turns.some((t) => NAME_OR_COMPANY_QUESTION.test(t.reply))) return 'something was asked twice';
+      if (!/Name: John Moeng\nCompany: University of Botswana/.test(r.turns[2].reply)) return 'the details sent were not used';
+      return booked(r, 1, 'social');
+    },
+  },
+  {
+    id: 'M',
+    title: 'Category stated in the message is not asked',
+    messages: ['Hi', 'Lesedi Tau, Debswana, business meeting, Boikarabelo, tomorrow, 11am', 'yes'],
+    hostSelectors: ['Lesedi Tau, Debswana, business meeting, Boikarabelo, tomorrow, 11am'],
+    names: ['Lesedi Tau'],
+    expect: (r) => {
+      if (r.turns.some((t) => TYPE_QUESTION.test(t.reply))) return 'visit type was asked although stated';
+      if (!/Visit type: Official/.test(r.turns[1].reply)) return 'summary does not show the visit type';
+      return booked(r, 3, 'official');
+    },
+  },
+  {
+    id: 'N',
+    title: 'Category asked in Setswana, answered with 2',
+    messages: ['Dumela', 'Kagiso Molefe, Debswana, kopano ya poroje, Boikarabelo, kamoso, 11am', '2', 'Ee'],
+    hostSelectors: ['Kagiso Molefe, Debswana, kopano ya poroje, Boikarabelo, kamoso, 11am'],
+    names: ['Kagiso Molefe'],
+    expect: (r) => {
+      if (!/^A ke ketelo ya semmuso kgotsa ya sebele\?/.test(r.turns[1].reply)) return 'visit type was not asked in Setswana';
+      if (!/Mofuta wa ketelo: Ya sebele/.test(r.turns[2].reply)) return 'summary does not show the visit type';
+      return booked(r, 3, 'social');
     },
   },
 ];
@@ -147,14 +217,15 @@ function commonProblems(scenario, turns) {
 }
 
 const results = [];
+const created = {};
 let senderNo = 100;
 for (const scenario of SCENARIOS) {
   const from = `26770000${senderNo++}`;
-  // Each scenario starts with an empty booking book, so one scenario's 10am visit cannot
-  // occupy the slot another scenario books.
+  // Each scenario starts with an empty booking book and only its own visitor record.
   store.visits.length = 0;
-  const visitsBefore = 0;
-  console.log(`\n=== ${scenario.id}. ${scenario.title} (sender ${from}) ===`);
+  store.visitors.length = 0;
+  if (scenario.record) store.visitors.push({ id: 900, ...scenario.record, phone: from });
+  console.log(`\n=== ${scenario.id}. ${scenario.title} (sender ${from}${scenario.record ? `, on record as ${scenario.record.name} / ${scenario.record.company}` : ''}) ===`);
   const turns = [];
   for (const text of scenario.messages) {
     const { reply, state } = await handleVisitorWithAgent({ from, text });
@@ -162,9 +233,28 @@ for (const scenario of SCENARIOS) {
     console.log(`BOT: ${reply.replace(/\n/g, '\n     ')}`);
     turns.push({ text, reply, state: JSON.parse(JSON.stringify(state)) });
   }
-  const visits = store.visits.slice(visitsBefore);
-  const problem = commonProblems(scenario, turns) || scenario.expect({ turns, visits });
+  const visits = store.visits.slice();
+  if (visits.length) created[scenario.id] = visits[0];
+  const problem = commonProblems(scenario, turns) || scenario.expect({ turns, visits, from });
   results.push({ id: scenario.id, pass: !problem, reason: problem || 'all checks passed' });
+}
+
+// The host's WhatsApp notification and the visitor's approval message for the visit from N.
+{
+  const visit = { ...created.N, status: 'approved', qr_token: 'test-token', pin: '123456' };
+  store.sent.length = 0;
+  await notifyHostNewVisit(visit);
+  await notifyVisitorApproved(visit);
+  const [host, approval] = store.sent;
+  console.log('\n=== O. Host notification and approval message for the visit from N ===');
+  console.log(`TO HOST ${host?.to}:\n     ${String(host?.text).replace(/\n/g, '\n     ')}`);
+  console.log(`TO VISITOR ${approval?.to} (QR image caption):\n     ${String(approval?.text).replace(/\n/g, '\n     ')}`);
+  const problem = !/Visit type: Social/.test(host?.text || '')
+    ? 'host notification has no visit type'
+    : !/Mofuta wa ketelo: Ya sebele/.test(approval?.text || '') || !approval?.image
+      ? 'approval message has no visit type'
+      : null;
+  results.push({ id: 'O', pass: !problem, reason: problem || 'visit type shown to host and visitor' });
 }
 
 console.log('\n=== Results ===');

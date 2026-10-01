@@ -656,3 +656,8 @@
   }
 
   .ap-badge.cancelled{background:#F1EEFA; color:#6F6796;}
+  /* Visit type (Official / Social) */
+  .ap-type-tag{display:inline-block; margin-left:6px; padding:2px 8px; border-radius:100px; font-size:10.5px; font-weight:700; letter-spacing:.02em; vertical-align:middle; white-space:nowrap;}
+  .ap-type-tag.official{background:#E9F0FF; color:#2F5BD3;}
+  .ap-type-tag.social{background:#EFE9FF; color:var(--violet-2);}
+  .ap-req-info .ap-type-tag{align-self:flex-start; width:fit-content; margin:3px 0 2px;}

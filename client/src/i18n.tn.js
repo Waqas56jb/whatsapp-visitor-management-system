@@ -260,4 +260,9 @@ export const TN = {
   'Cannot reach the server. Check your connection.': 'Ga re kgone go fitlhelela seva. Tlhola kgokagano ya gago.',
   'Incorrect username or password.': 'Leina la modirisi kgotsa lefoko la sephiri ga di a siama.',
   'This account has been disabled. Contact your administrator.': 'Akhaonto e e thibetswe. Ikgolaganye le motsamaisi wa gago.',
+
+  // Visit type
+  'Visit type': 'Mofuta wa ketelo',
+  Official: 'Ya semmuso',
+  Social: 'Ya sebele',
 };

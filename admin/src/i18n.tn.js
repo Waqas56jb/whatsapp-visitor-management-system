@@ -425,4 +425,11 @@ export const TN = {
   'Unblocked host': 'Moamogedi o buletswe',
   'Updated account status': 'Maemo a akhaonto a fetotswe',
   'Updated host status': 'Maemo a moamogedi a fetotswe',
+
+  // Visit type
+  'Visit type': 'Mofuta wa ketelo',
+  Official: 'Ya semmuso',
+  Social: 'Ya sebele',
+  'All visit types': 'Mefuta yotlhe ya diketelo',
+  'Filter by visit type': 'Tlhopha ka mofuta wa ketelo',
 };

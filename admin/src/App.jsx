@@ -83,6 +83,17 @@ function matches(query, ...fields) {
   return fields.some((f) => String(f ?? '').toLowerCase().includes(q));
 }
 
+function visitTypeOf(v) {
+  return v.visitType === 'social' ? 'social' : 'official';
+}
+
+// Small Official / Social label for a visit.
+function TypeTag({ v }) {
+  const { t } = useI18n();
+  const type = visitTypeOf(v);
+  return <span className={`type-tag ${type}`}>{t(type === 'social' ? 'Social' : 'Official')}</span>;
+}
+
 function Badge({ status }) {
   const { t } = useI18n();
   const cls = STATUS_LABEL[status] ? status : 'active';
@@ -133,6 +144,7 @@ export default function App() {
   const [view, setView] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [visitFilter, setVisitFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [modal, setModal] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -350,6 +362,7 @@ export default function App() {
   const shownVisitors = visitors.filter((v) => matches(q, v.name, v.company));
   const shownVisits = visits
     .filter((v) => visitFilter === 'all' || v.status === visitFilter)
+    .filter((v) => typeFilter === 'all' || visitTypeOf(v) === typeFilter)
     .filter((v) => matches(q, v.ref, v.visitor, v.company, v.host, v.purpose));
   const shownPasses = approved.filter((v) => matches(q, v.ref, v.visitor, v.pin));
   const shownHosts = hosts.filter((h) => matches(q, h.name, h.dept, h.phone));
@@ -392,6 +405,7 @@ export default function App() {
         ['Company', v.company || '—'],
         ['Host', v.host],
         ['Purpose', v.purpose],
+        ['Visit type', <TypeTag key="t" v={v} />],
         ['Date / Time', `${formatDate(v.date)} · ${v.time}`],
         ['Status', <Badge key="s" status={v.status} />],
         ['Backup PIN', v.pin || '—'],
@@ -738,6 +752,11 @@ export default function App() {
                         <option value="used">{t('Checked in')}</option>
                         <option value="cancelled">{t('Cancelled')}</option>
                       </select>
+                      <select className="filter-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label={t('Filter by visit type')}>
+                        <option value="all">{t('All visit types')}</option>
+                        <option value="official">{t('Official')}</option>
+                        <option value="social">{t('Social')}</option>
+                      </select>
                       <button className="btn btn-violet btn-sm" onClick={() => setModal('visitModal')}>
                         <Plus size={14} strokeWidth={2.4} /> {t('New request')}
                       </button>
@@ -768,7 +787,10 @@ export default function App() {
                                 {v.company ? <div className="cell-sub">{v.company}</div> : null}
                               </td>
                               <td data-label={t('Host')}>{v.host}</td>
-                              <td data-label={t('Purpose')}>{v.purpose}</td>
+                              <td data-label={t('Purpose')}>
+                                <div>{v.purpose}</div>
+                                <TypeTag v={v} />
+                              </td>
                               <td data-label={t('Date / Time')} className="nowrap">
                                 {formatDate(v.date)} · {v.time}
                               </td>
