@@ -95,6 +95,13 @@ async function loadConversation(from) {
   return loadState(newest);
 }
 
+// True while this number's own booking conversation is waiting for an answer (any step other
+// than idle). Read-only: used so a host's "1"/"yes" answers their own booking question first.
+export async function bookingWaiting(from) {
+  const state = await loadConversation(from);
+  return state.stage !== 'idle';
+}
+
 async function saveConversation(from, state, accountId) {
   state.savedAt = Date.now();
   liveStates.set(stateKey(from), state);

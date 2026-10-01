@@ -191,6 +191,8 @@ export const Visit = {
         row.visitor_phone || null,
       ]
     ),
+  // Only a pending visit can be decided. When a host (WhatsApp) and an admin (panel) decide at
+  // the same moment, the first UPDATE wins and the second gets null.
   decide: (id, status, qr_token, pin) =>
     queryOne(
       `UPDATE ${T.visits}
@@ -198,8 +200,19 @@ export const Visit = {
            qr_token = COALESCE($3, qr_token),
            pin = COALESCE($4, pin),
            decided_at = NOW()
-       WHERE id = $1 RETURNING *`,
+       WHERE id = $1 AND status = 'pending' RETURNING *`,
       [id, status, qr_token, pin]
+    ),
+  setHostMessageId: (id, messageId) =>
+    queryOne(`UPDATE ${T.visits} SET host_message_id = $2 WHERE id = $1 RETURNING id`, [id, messageId]),
+  findByHostMessageId: (messageId) => queryOne(`${VISIT_SELECT} WHERE vs.host_message_id = $1`, [messageId]),
+  // A host's requests still waiting for a decision, from today on, soonest first.
+  listPendingForHost: (hostId, fromDate) =>
+    query(
+      `${VISIT_SELECT}
+       WHERE vs.host_id = $1 AND vs.status = 'pending' AND vs.visit_date >= $2
+       ORDER BY vs.visit_date ASC, vs.visit_time ASC, vs.id ASC`,
+      [hostId, fromDate]
     ),
   setStatus: (id, status) => queryOne(`UPDATE ${T.visits} SET status = $2 WHERE id = $1 RETURNING *`, [id, status]),
   // New date/time goes back to the host for approval; the old QR/PIN stop working.
@@ -217,10 +230,11 @@ export const Visit = {
        WHERE status IN ('pending', 'approved') AND visit_date >= $1`,
       [date]
     ),
+  // Checks a visitor in once: a second scan at the same moment gets null.
   markUsed: (id) =>
     queryOne(
-      `UPDATE ${T.visits} SET used_at = NOW(), status = CASE WHEN status = 'approved' THEN 'used' ELSE status END
-       WHERE id = $1 RETURNING *`,
+      `UPDATE ${T.visits} SET used_at = NOW(), status = 'used'
+       WHERE id = $1 AND status = 'approved' AND used_at IS NULL RETURNING *`,
       [id]
     ),
 };

@@ -59,6 +59,40 @@ export function chatJidFromMsg(msg) {
   return msg?.key?.remoteJid || '';
 }
 
+// The id of the message this one replies to (quotes), if any.
+export function quotedMessageId(msg) {
+  const m = unwrapMessage(msg?.message);
+  for (const part of Object.values(m || {})) {
+    const id = part && typeof part === 'object' ? part.contextInfo?.stanzaId : null;
+    if (id) return String(id);
+  }
+  return null;
+}
+
+function isPhoneJid(jid) {
+  const value = String(jid || '');
+  return value.includes('@s.whatsapp.net') || value.includes('@c.us');
+}
+
+// The sender's real phone number, for matching against registered host numbers. WhatsApp may
+// deliver a sender as a LID (an anonymous id, "…@lid") instead of a phone number: Baileys
+// usually attaches the phone number alongside it, and otherwise its LID→phone store is asked.
+// Returns null when the phone number cannot be determined — never a LID, so a LID can never be
+// mistaken for a host's number.
+export async function senderPhone(msg, sock) {
+  const key = msg?.key || {};
+  for (const jid of [key.remoteJidAlt, key.participantAlt, key.senderPn, key.remoteJid, key.participant]) {
+    if (isPhoneJid(jid)) return phoneFromJid(jid);
+  }
+  const lid = [key.remoteJid, key.participant, key.remoteJidAlt, key.participantAlt].find((jid) => String(jid || '').endsWith('@lid'));
+  const store = sock?.signalRepository?.lidMapping;
+  if (lid && typeof store?.getPNForLID === 'function') {
+    const pn = await store.getPNForLID(lid).catch(() => null);
+    if (pn && isPhoneJid(pn)) return phoneFromJid(pn);
+  }
+  return null;
+}
+
 export function phoneFromMsg(msg) {
   const key = msg?.key || {};
   const candidates = [key.remoteJidAlt, key.participantAlt, key.senderPn, key.remoteJid, key.participant];

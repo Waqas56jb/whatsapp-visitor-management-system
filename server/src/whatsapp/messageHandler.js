@@ -1,9 +1,8 @@
-import { ConversationLog, Host } from '../models/index.js';
-import { chatJidFromMsg, extractText, isIgnorableJid, isUserChatMessage, phoneFromMsg } from './inbound.js';
+import { ConversationLog } from '../models/index.js';
+import { handleHostMessage } from './hostDecisions.js';
+import { chatJidFromMsg, extractText, isIgnorableJid, isUserChatMessage, phoneFromMsg, quotedMessageId, senderPhone } from './inbound.js';
 import { sendText } from './sendMessage.js';
 import { handleVisitorWithAgent, sendVisitorError } from './visitorAgent.js';
-
-const HOST_DECISION_RE = /^(yes[, ]+)?(approve|reject|decline)\b|\b(approve|reject)\s+vms-\d{4}-\d+/i;
 
 // WhatsApp can redeliver the same message; remember recent ids so each is handled once.
 const seenIds = new Set();
@@ -26,23 +25,9 @@ function enqueue(key, task) {
   return run;
 }
 
-// Hosts get a WhatsApp heads-up only; decisions are made in the admin panel for now.
-async function handleHostCommand(from, text) {
-  if (!HOST_DECISION_RE.test(String(text || '').trim())) return false;
-  const host = await Host.findByPhone(from);
-  if (!host) return false;
-  await sendText(
-    from,
-    [
-      'Approving or rejecting visits on WhatsApp is not available yet.',
-      'The request is awaiting approval in the admin panel.',
-    ].join('\n'),
-    { onlyTarget: true }
-  );
-  return true;
-}
-
-async function processMessage(msg, ctx) {
+// Every incoming chat message: a host's approve/decline reply is handled first, everything else
+// goes to the visitor booking flow. Exported so the manual transcripts drive the real path.
+export async function processMessage(msg, ctx = {}) {
   const chatJid = chatJidFromMsg(msg);
   const text = extractText(msg);
   const from = phoneFromMsg(msg) || chatJid;
@@ -55,7 +40,18 @@ async function processMessage(msg, ctx) {
     account_id: ctx.accountId || null,
   }).catch((err) => console.error('Conversation incoming log failed:', err.message));
 
-  if (await handleHostCommand(from, text)) return;
+  try {
+    // Host matching uses the sender's real phone number (resolved from a LID when needed).
+    const handled = await handleHostMessage({
+      phone: await senderPhone(msg, ctx.sock),
+      text,
+      quotedId: quotedMessageId(msg),
+      reply: (message) => sendText(chatJid, message, { onlyTarget: true }),
+    });
+    if (handled) return;
+  } catch (err) {
+    console.error('Host decision failed:', err.message);
+  }
 
   try {
     await handleVisitorWithAgent({ from, text, ctx: { accountId: ctx.accountId || 0 }, replyJid: chatJid });
@@ -78,7 +74,7 @@ export function attachMessageHandler(sock, ctx = {}) {
         if (!firstSeen(msg.key?.id)) continue;
         const key = phoneFromMsg(msg) || chatJid;
         if (!key) continue;
-        enqueue(key, () => processMessage(msg, ctx)).catch((err) =>
+        enqueue(key, () => processMessage(msg, { ...ctx, sock })).catch((err) =>
           console.error('WhatsApp message handler failed:', err.message)
         );
       } catch (err) {

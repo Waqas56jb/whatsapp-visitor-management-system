@@ -86,10 +86,16 @@ export async function sendImage(jid, imagePathOrBuffer, caption, options = {}) {
 }
 
 export async function sendTextToPhone(phone, text, options = {}) {
+  return (await sendTextToPhoneDetailed(phone, text, options)).sent;
+}
+
+// Like sendTextToPhone, but also returns the WhatsApp message id, so a reply that quotes this
+// message can be matched to it.
+export async function sendTextToPhoneDetailed(phone, text, options = {}) {
   const digits = normalizePhone(phone);
-  if (!digits) return false;
+  if (!digits) return { sent: false, id: null };
   const sock = options.sock || readySock(options.accountId || null);
-  if (!sock) return false;
+  if (!sock) return { sent: false, id: null };
   const destinations = [];
   try {
     if (typeof sock.onWhatsApp === 'function') {
@@ -104,12 +110,12 @@ export async function sendTextToPhone(phone, text, options = {}) {
   const unique = [...new Set(destinations.filter(Boolean))];
   for (const to of unique) {
     try {
-      await sock.sendMessage(to, { text: String(text) });
+      const sent = await sock.sendMessage(to, { text: String(text) });
       await logOutgoing(to, String(text), options.accountId || null);
-      return true;
+      return { sent: true, id: sent?.key?.id || null };
     } catch (err) {
       console.error(`sendTextToPhone failed to ${to}:`, err.message);
     }
   }
-  return false;
+  return { sent: false, id: null };
 }

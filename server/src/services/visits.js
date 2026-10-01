@@ -1,16 +1,11 @@
-import {
-  Audit,
-  ConversationLog,
-  Host,
-  Visit,
-  Visitor,
-} from '../models/index.js';
+import { Audit, ConversationLog, Host, Visit, Visitor } from '../models/index.js';
 import { generatePin, generateQrToken, generateRef } from '../utils/generateToken.js';
 import { formatDate } from '../utils/mappers.js';
 import { normalizePhone } from '../utils/phone.js';
 import {
+  notifyHostAdminDecision,
+  notifyHostArrival,
   notifyHostCancelled,
-  notifyHostDecisionResult,
   notifyHostRescheduled,
   notifyHostNewVisit,
   notifyVisitorApproved,
@@ -146,7 +141,10 @@ export async function rescheduleVisitByVisitor({ ref, visitorPhone, date, time }
   return { ok: true, ...base };
 }
 
-export async function decideVisit({ visitId, decision, actor = 'Host', actorHostId = null, notifyHostPhone = null }) {
+// The one way a visit is approved or declined, from the admin panel (via 'panel') or by the host
+// replying on WhatsApp (via 'whatsapp'). Only the first decision applies; a later one gets
+// { alreadyDecided: true } with the visit as it now is.
+export async function decideVisit({ visitId, decision, actor = 'Host', actorHostId = null, via = 'panel' }) {
   const visit = await Visit.findById(visitId);
   if (!visit) {
     const err = new Error('Visit not found');
@@ -173,11 +171,15 @@ export async function decideVisit({ visitId, decision, actor = 'Host', actorHost
       pin = generatePin();
     }
   }
-  await Visit.decide(visit.id, approved ? 'approved' : 'rejected', qr_token, pin);
+  const decided = await Visit.decide(visit.id, approved ? 'approved' : 'rejected', qr_token, pin);
+  if (!decided) {
+    // Someone else decided between the read above and this update.
+    return { visit: await Visit.findById(visit.id), alreadyDecided: true };
+  }
   await Audit.add({
     actor,
     action: approved ? 'Approved visit' : 'Rejected visit',
-    details: `${visit.ref_number} — ${visit.visitor_name}`,
+    details: `${visit.ref_number} — ${visit.visitor_name}${via === 'whatsapp' ? ' (by the host on WhatsApp)' : ''}`,
   });
 
   const full = await Visit.findById(visit.id);
@@ -186,9 +188,9 @@ export async function decideVisit({ visitId, decision, actor = 'Host', actorHost
   } else {
     await notifyVisitorRejected(full).catch((err) => console.error('Visitor reject notify failed:', err.message));
   }
-  if (notifyHostPhone) {
-    await notifyHostDecisionResult(notifyHostPhone, full, approved ? 'approved' : 'rejected').catch((err) =>
-      console.error('Host decision ack failed:', err.message)
+  if (via === 'panel') {
+    await notifyHostAdminDecision(full, approved ? 'approved' : 'rejected').catch((err) =>
+      console.error('Host admin-decision notice failed:', err.message)
     );
   }
   const visitorPhone = full.visitor_phone || full.visitor_profile_phone;
@@ -198,22 +200,6 @@ export async function decideVisit({ visitId, decision, actor = 'Host', actorHost
     );
   }
   return { visit: full, alreadyDecided: false };
-}
-
-export async function decideVisitByRef({ ref, decision, actorPhone, actorHostId = null, notifyHostPhone }) {
-  const visit = await Visit.findByRef(ref);
-  if (!visit) return { error: 'I could not find that visit reference.' };
-  const host = actorHostId ? await Host.findById(actorHostId) : await Host.findByPhone(actorPhone);
-  if (!host || Number(host.id) !== Number(visit.host_id)) {
-    return { error: 'This request belongs to another host.' };
-  }
-  return decideVisit({
-    visitId: visit.id,
-    decision,
-    actor: host.name,
-    actorHostId: visit.host_id,
-    notifyHostPhone: notifyHostPhone === undefined ? actorPhone : notifyHostPhone,
-  });
 }
 
 function todayStamp() {
@@ -248,12 +234,26 @@ export async function validatePass({ token, pin, actor = 'Security gate' }) {
   }
 
   const used = await Visit.markUsed(visit.id);
+  if (!used) {
+    // Another gate checked this pass in at the same moment.
+    return { ok: false, reason: 'already_used', error: 'This pass has already been used' };
+  }
   const full = await Visit.findById(used.id);
   await Audit.add({
     actor,
     action: 'Validated pass',
     details: `${full.ref_number} — ${full.visitor_name}`,
   });
+
+  // Tell the host their visitor has arrived. The check-in stands even if this fails.
+  const alert = await notifyHostArrival(full).catch((err) => ({ sent: false, reason: err.message }));
+  if (!alert.sent) {
+    await Audit.add({
+      actor: 'System',
+      action: 'Arrival alert not sent',
+      details: `${full.ref_number} — ${full.visitor_name} → ${full.host_name}: ${alert.reason || 'unknown reason'}`,
+    }).catch((err) => console.error('Arrival alert audit failed:', err.message));
+  }
 
   return {
     ok: true,
@@ -272,5 +272,6 @@ export async function validatePass({ token, pin, actor = 'Security gate' }) {
       pin: full.pin,
       status: 'used',
     },
+    hostNotified: Boolean(alert.sent),
   };
 }

@@ -1,5 +1,6 @@
-// Module resolve hook: swaps the database, host/visit services and WhatsApp sender for fakes.js.
-const FAKED = ['/src/models/index.js', '/src/services/hosts.js', '/src/services/visits.js', '/src/whatsapp/sendMessage.js'];
+// Module resolve hook: swaps the database models, the host list service and the WhatsApp sender
+// for fakes.js. The visit services, notifications and message handling are the real modules.
+const FAKED = ['/src/models/index.js', '/src/services/hosts.js', '/src/whatsapp/sendMessage.js'];
 const FAKES_URL = new URL('./fakes.js', import.meta.url).href;
 
 export async function resolve(specifier, context, nextResolve) {
