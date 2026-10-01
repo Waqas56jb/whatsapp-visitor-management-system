@@ -248,8 +248,6 @@ export const TN = {
   'Hide password': 'Fitlha lefoko la sephiri',
   'Show password': 'Bontsha lefoko la sephiri',
   'Signing in…': 'O a tsena…',
-  'Test login': 'Go tsena ga teko',
-  'Fill test credentials': 'Tlatsa dintlha tsa teko',
   'Need access? Ask your administrator to create an account.': 'O tlhoka go tsena? Kopa motsamaisi wa gago go go direla akhaonto.',
   'Enter your username and password.': 'Tsenya leina la modirisi le lefoko la sephiri.',
   'Welcome, {name}': 'Re a go amogela, {name}',
@@ -432,4 +430,22 @@ export const TN = {
   Social: 'Ya sebele',
   'All visit types': 'Mefuta yotlhe ya diketelo',
   'Filter by visit type': 'Tlhopha ka mofuta wa ketelo',
+
+  // Passwords
+  'Change password': 'Fetola lefoko la sephiri',
+  'At least 10 characters. Other signed-in sessions will be signed out.':
+    'Bonnye ditlhaka di le 10. O tla ntshiwa mo didirisweng tse dingwe tse o tsentseng ka tsone.',
+  'Current password': 'Lefoko la sephiri la jaanong',
+  'New password': 'Lefoko la sephiri le lesha',
+  'Confirm new password': 'Tlhomamisa lefoko la sephiri le lesha',
+  'Password changed': 'Lefoko la sephiri le fetotswe',
+  'Could not change the password': 'Ga re a kgona go fetola lefoko la sephiri',
+  'The new password must be at least 10 characters.': 'Lefoko la sephiri le lesha le tshwanetse go nna le ditlhaka di le 10 bonnye.',
+  'The new password and its confirmation do not match.': 'Lefoko la sephiri le lesha le tlhomamiso ya lone ga di tshwane.',
+  'Reset password': 'Tlhoma lefoko la sephiri sešwa',
+  'Password reset for {name}': 'Lefoko la sephiri la {name} le tlhomilwe sešwa',
+  'Could not reset the password': 'Ga re a kgona go tlhoma lefoko la sephiri sešwa',
+  'Set a new password for {name} ({username}). They will be signed out and must use the new password.':
+    'Tlhoma lefoko la sephiri le lesha la {name} ({username}). Ba tla ntshiwa, mme ba tshwanetse go dirisa lefoko le lesha.',
+  'At least 10 characters': 'Bonnye ditlhaka di le 10',
 };

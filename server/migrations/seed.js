@@ -1,3 +1,11 @@
+// Demo data for a fresh local database. Never run automatically.
+//
+//   SEED_ADMIN_PASSWORD='…' npm run seed          (or run it and type the password when asked)
+//
+// Refuses to run when NODE_ENV=production or when an admin already exists, so it can never
+// overwrite or add to a live system. No password is stored in this file or printed.
+import crypto from 'crypto';
+import readline from 'readline/promises';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -6,49 +14,68 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
+const MIN_PASSWORD = 10;
+
 const { pool, query, queryOne } = await import('../src/config/db.js');
 const { T } = await import('../src/config/tables.js');
 
+async function askPassword(label) {
+  if (!process.stdin.isTTY) return '';
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(`${label}: `)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
 async function seed() {
-  const adminHash = await bcrypt.hash('admin123', 10);
-  const hostHash = await bcrypt.hash('host2026', 10);
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Refusing to seed: NODE_ENV is production.');
+  }
+  const admins = await queryOne(`SELECT COUNT(*)::int AS n FROM ${T.admins}`);
+  if (admins?.n > 0) {
+    throw new Error('Refusing to seed: an admin account already exists. Seeding is only for a fresh database.');
+  }
 
-  await query(
-    `INSERT INTO ${T.admins} (username, password_hash, name)
-     VALUES ('admin', $1, 'Admin')
-     ON CONFLICT (username) DO NOTHING`,
-    [adminHash]
-  );
+  const adminUsername = (process.env.SEED_ADMIN_USERNAME || 'admin').trim();
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || (await askPassword(`Password for admin "${adminUsername}"`));
+  if (adminPassword.length < MIN_PASSWORD) {
+    throw new Error(`Set SEED_ADMIN_PASSWORD (or type a password) of at least ${MIN_PASSWORD} characters.`);
+  }
+  await query(`INSERT INTO ${T.admins} (username, password_hash, name) VALUES ($1, $2, 'Admin')`, [
+    adminUsername,
+    await bcrypt.hash(adminPassword, 10),
+  ]);
 
-  const account = await queryOne(
-    `INSERT INTO ${T.accounts} (name, username, password_hash, role, status)
-     VALUES ('Boikarabelo Ramaretlwa', 'boikarabelo', $1, 'Host', 'active')
-     ON CONFLICT (username) DO UPDATE
-       SET name = EXCLUDED.name,
-           password_hash = EXCLUDED.password_hash,
-           status = 'active'
-     RETURNING *`,
-    [hostHash]
-  );
-
-  async function ensureHost(name, department, phone, accountId = null) {
-    const existing = await queryOne(`SELECT * FROM ${T.hosts} WHERE LOWER(name) = LOWER($1)`, [name]);
-    if (existing) {
-      if (accountId && !existing.account_id) {
-        return queryOne(`UPDATE ${T.hosts} SET account_id = $2 WHERE id = $1 RETURNING *`, [existing.id, accountId]);
-      }
-      return existing;
-    }
-    return queryOne(
-      `INSERT INTO ${T.hosts} (name, department, phone, status, account_id)
-       VALUES ($1,$2,$3,'active',$4) RETURNING *`,
-      [name, department, phone, accountId]
+  // A demo host login is only created when a password for it is supplied.
+  let account = null;
+  const hostPassword = process.env.SEED_HOST_PASSWORD || '';
+  if (hostPassword) {
+    if (hostPassword.length < MIN_PASSWORD) throw new Error(`SEED_HOST_PASSWORD must be at least ${MIN_PASSWORD} characters.`);
+    account = await queryOne(
+      `INSERT INTO ${T.accounts} (name, username, password_hash, role, status)
+       VALUES ('Boikarabelo Ramaretlwa', 'boikarabelo', $1, 'Host', 'active')
+       ON CONFLICT (username) DO NOTHING
+       RETURNING *`,
+      [await bcrypt.hash(hostPassword, 10)]
     );
   }
 
-  const h1 = await ensureHost('Boikarabelo Ramaretlwa', 'Technology Planning', '+267 71 000 001', account.id);
-  const h2 = await ensureHost('Naledi Kgosi', 'Human Resources', '+267 71 000 002');
-  const h3 = await ensureHost('Tshepo Molefe', 'Finance', '+267 71 000 003');
+  // Demo hosts have no phone number, so no WhatsApp notification is ever sent to a stranger.
+  async function ensureHost(name, department, accountId = null) {
+    const existing = await queryOne(`SELECT * FROM ${T.hosts} WHERE LOWER(name) = LOWER($1)`, [name]);
+    if (existing) return existing;
+    return queryOne(
+      `INSERT INTO ${T.hosts} (name, department, phone, status, account_id)
+       VALUES ($1,$2,'','active',$3) RETURNING *`,
+      [name, department, accountId]
+    );
+  }
+
+  const h1 = await ensureHost('Boikarabelo Ramaretlwa', 'Technology Planning', account?.id || null);
+  const h2 = await ensureHost('Naledi Kgosi', 'Human Resources');
+  const h3 = await ensureHost('Tshepo Molefe', 'Finance');
 
   async function ensureVisitor(name, company) {
     const existing = await queryOne(`SELECT * FROM ${T.visitors} WHERE LOWER(name) = LOWER($1)`, [name]);
@@ -63,6 +90,7 @@ async function seed() {
   async function ensureVisit(ref, visitorId, hostId, purpose, date, time, status) {
     const existing = await queryOne(`SELECT * FROM ${T.visits} WHERE ref_number = $1`, [ref]);
     if (existing) return existing;
+    const approved = status === 'approved';
     return queryOne(
       `INSERT INTO ${T.visits} (ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, qr_token, pin, decided_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, CASE WHEN $7 = 'pending' THEN NULL ELSE NOW() END)
@@ -75,8 +103,8 @@ async function seed() {
         date,
         time,
         status,
-        status === 'approved' ? 'seed-token-' + ref : null,
-        status === 'approved' ? String(100000 + Math.floor(Math.random() * 900000)) : null,
+        approved ? crypto.randomBytes(32).toString('hex') : null,
+        approved ? String(crypto.randomInt(100000, 1000000)) : null,
       ]
     );
   }
@@ -92,13 +120,7 @@ async function seed() {
     await query(`INSERT INTO ${T.audit} (actor, action, details) VALUES ('Admin', 'System initialized', 'Demo data seeded')`);
   }
 
-  await query(
-    `INSERT INTO ${T.settings} (id, org_name, phone, email)
-     VALUES (1, 'Botho Innovations', '+27 00 000 0000', 'support@bothoinnovations.com')
-     ON CONFLICT (id) DO NOTHING`
-  );
-
-  console.log('Seed complete. Admin: admin / admin123  |  Host: boikarabelo / host2026');
+  console.log(`Seed complete. Admin username: ${adminUsername}${account ? ' | Demo host username: boikarabelo' : ''}`);
 }
 
 try {

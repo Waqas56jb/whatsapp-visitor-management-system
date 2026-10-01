@@ -37,12 +37,11 @@ npm run migrate
 npm run seed
 ```
 
-Demo logins after seed:
+`npm run seed` is for a fresh local database only. It refuses to run when `NODE_ENV=production`
+or when an admin already exists. It asks for the admin password (at least 10 characters), or reads
+it from `SEED_ADMIN_PASSWORD`. A demo host login is only created when `SEED_HOST_PASSWORD` is set.
 
-- Admin: `admin` / `admin123`
-- Host: `boikarabelo` / `host2026`
-
-Put a **real** WhatsApp number on the host you will approve as (Admin → Hosts). Seed phones are placeholders.
+Demo hosts have no phone number. Put a **real** WhatsApp number on the host you will approve as (Admin → Hosts).
 
 ## Link WhatsApp (first time)
 

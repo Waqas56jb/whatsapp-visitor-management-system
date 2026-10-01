@@ -6,6 +6,10 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 const app = express();
 
+// Railway puts one proxy in front of the app; trusting exactly that hop makes req.ip the real
+// client IP (for rate limits) without letting clients spoof it. TRUST_PROXY overrides the hop count.
+app.set('trust proxy', process.env.TRUST_PROXY === undefined ? 1 : Number(process.env.TRUST_PROXY) || false);
+
 const extraOrigins = String(process.env.CORS_ORIGINS || '')
   .split(',')
   .map((item) => item.trim())

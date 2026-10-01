@@ -1,6 +1,21 @@
 import bcrypt from 'bcryptjs';
 import { Account, Admin, Host } from '../models/index.js';
-import { signToken } from '../utils/jwt.js';
+import { passwordStamp, signToken } from '../utils/jwt.js';
+
+export function adminToken(admin) {
+  return signToken({ role: 'admin', username: admin.username, name: admin.name, adminId: admin.id, pwc: passwordStamp(admin) });
+}
+
+export function hostToken(account, hostId) {
+  return signToken({
+    role: 'host',
+    accountId: account.id,
+    hostId: hostId || null,
+    name: account.name,
+    username: account.username,
+    pwc: passwordStamp(account),
+  });
+}
 
 export async function adminLogin(req, res) {
   const username = String(req.body.username || '').trim();
@@ -9,8 +24,7 @@ export async function adminLogin(req, res) {
   if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
     return res.status(401).json({ error: 'Incorrect username or password.' });
   }
-  const token = signToken({ role: 'admin', username: admin.username, name: admin.name, adminId: admin.id });
-  res.json({ token, admin: { name: admin.name, username: admin.username } });
+  res.json({ token: adminToken(admin), admin: { name: admin.name, username: admin.username } });
 }
 
 export async function clientLogin(req, res) {
@@ -27,15 +41,8 @@ export async function clientLogin(req, res) {
     return res.status(403).json({ error: 'This account has been disabled. Contact your administrator.' });
   }
   const host = (await Host.findByAccountId(account.id)) || (await Host.findByName(account.name));
-  const token = signToken({
-    role: 'host',
-    accountId: account.id,
-    hostId: host?.id || null,
-    name: account.name,
-    username: account.username,
-  });
   res.json({
-    token,
+    token: hostToken(account, host?.id),
     host: {
       id: account.id,
       name: account.name,

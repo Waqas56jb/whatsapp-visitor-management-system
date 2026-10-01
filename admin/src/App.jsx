@@ -12,6 +12,7 @@ import {
   Inbox,
   KeyRound,
   LayoutDashboard,
+  Lock,
   LogOut,
   Menu,
   MessagesSquare,
@@ -165,6 +166,13 @@ export default function App() {
   const [setOrgName, setSetOrgName] = useState('Botho Innovations');
   const [setPhone, setSetPhone] = useState('');
   const [setEmail, setSetEmail] = useState('');
+  const [me, setMe] = useState(null);
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [resetTarget, setResetTarget] = useState(null);
+  const [resetPass, setResetPass] = useState('');
+  const [resetConfirm, setResetConfirm] = useState('');
 
   const [visits, setVisits] = useState([]);
   const [hosts, setHosts] = useState([]);
@@ -181,14 +189,16 @@ export default function App() {
   async function fetchAll({ silent = false } = {}) {
     if (!silent) setPageLoading(true);
     try {
-      const [v, h, vis, a, au, s] = await Promise.all([
+      const [v, h, vis, a, au, s, m] = await Promise.all([
         api.get('/visits'),
         api.get('/hosts'),
         api.get('/visitors'),
         api.get('/accounts'),
         api.get('/audit'),
         api.get('/settings').catch(() => ({ data: {} })),
+        api.get('/auth/me').catch(() => ({ data: null })),
       ]);
+      setMe(m.data);
       setVisits(v.data || []);
       setHosts(h.data || []);
       setVisitors(vis.data || []);
@@ -337,6 +347,60 @@ export default function App() {
     }
   }
 
+  async function changePassword() {
+    if (!pwCurrent || !pwNew) {
+      toast(t('Please fill in every field'), true);
+      return;
+    }
+    if (pwNew.length < 10) {
+      toast(t('The new password must be at least 10 characters.'), true);
+      return;
+    }
+    if (pwNew !== pwConfirm) {
+      toast(t('The new password and its confirmation do not match.'), true);
+      return;
+    }
+    try {
+      const { data } = await api.post('/auth/admin/password', { currentPassword: pwCurrent, newPassword: pwNew, confirmPassword: pwConfirm });
+      // The server ends every other session; this one continues with the new token.
+      setAdminToken(data.token);
+      setPwCurrent('');
+      setPwNew('');
+      setPwConfirm('');
+      toast(t('Password changed'));
+    } catch (err) {
+      toast(err.response?.data?.error || t('Could not change the password'), true);
+    }
+  }
+
+  function openReset(account) {
+    setResetTarget(account);
+    setResetPass('');
+    setResetConfirm('');
+    setModal('resetModal');
+  }
+
+  async function resetAccountPassword() {
+    if (resetPass.length < 10) {
+      toast(t('The new password must be at least 10 characters.'), true);
+      return;
+    }
+    if (resetPass !== resetConfirm) {
+      toast(t('The new password and its confirmation do not match.'), true);
+      return;
+    }
+    try {
+      await api.post(`/accounts/${resetTarget.id}/password`, { newPassword: resetPass, confirmPassword: resetConfirm });
+      closeModal();
+      setResetPass('');
+      setResetConfirm('');
+      await fetchAll({ silent: true });
+      toast(t('Password reset for {name}', { name: resetTarget.name }));
+    } catch (err) {
+      toast(err.response?.data?.error || t('Could not reset the password'), true);
+    }
+  }
+
   async function exportCSV(type) {
     try {
       const res = await api.get(`/reports/export?type=${type}`, { responseType: 'blob' });
@@ -479,8 +543,8 @@ export default function App() {
               <div className="sb-user">
                 <div className="sb-avatar"></div>
                 <div>
-                  <b>{t('Admin')}</b>
-                  <span>{t('Super Admin')}</span>
+                  <b>{me?.name || ''}</b>
+                  <span>{me?.username ? `@${me.username}` : ''}</span>
                 </div>
               </div>
               <button className="sb-logout" onClick={doLogout}>
@@ -1036,6 +1100,9 @@ export default function App() {
                                       {t('Block')}
                                     </button>
                                   )}
+                                  <button className="btn btn-sm btn-ghost" onClick={() => openReset(a)}>
+                                    {t('Reset password')}
+                                  </button>
                                   <button className="btn btn-sm btn-danger" onClick={() => deleteAccount(a.id, a.name)}>
                                     {t('Delete')}
                                   </button>
@@ -1243,6 +1310,38 @@ export default function App() {
                   <div className="panel-head">
                     <div className="panel-title">
                       <span className="panel-ic">
+                        <Lock size={16} strokeWidth={2} />
+                      </span>
+                      <div>
+                        <h3>{t('Change password')}</h3>
+                        <p>{t('At least 10 characters. Other signed-in sessions will be signed out.')}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="form-grid">
+                    <div className="f-field span2">
+                      <label htmlFor="pwCurrent">{t('Current password')}</label>
+                      <input id="pwCurrent" type="password" autoComplete="current-password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} />
+                    </div>
+                    <div className="f-field">
+                      <label htmlFor="pwNew">{t('New password')}</label>
+                      <input id="pwNew" type="password" autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} />
+                    </div>
+                    <div className="f-field">
+                      <label htmlFor="pwConfirm">{t('Confirm new password')}</label>
+                      <input id="pwConfirm" type="password" autoComplete="new-password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="form-actions">
+                    <button className="btn btn-violet" onClick={changePassword}>
+                      {t('Change password')}
+                    </button>
+                  </div>
+                </div>
+                <div className="panel">
+                  <div className="panel-head">
+                    <div className="panel-title">
+                      <span className="panel-ic">
                         <Settings size={16} strokeWidth={2} />
                       </span>
                       <div>
@@ -1353,6 +1452,41 @@ export default function App() {
             </button>
             <button className="btn btn-violet" onClick={saveAccount}>
               {t('Create account')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={'modal-bg' + (modal === 'resetModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
+        <div className="modal" role="dialog" aria-modal="true" aria-label={t('Reset password')}>
+          <div className="modal-head">
+            <h3>{t('Reset password')}</h3>
+            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
+              <X size={14} strokeWidth={2.2} />
+            </button>
+          </div>
+          <p className="mini-note">
+            {t('Set a new password for {name} ({username}). They will be signed out and must use the new password.', {
+              name: resetTarget?.name || '',
+              username: resetTarget?.username || '',
+            })}
+          </p>
+          <div className="form-grid full">
+            <div className="f-field">
+              <label htmlFor="resetPass">{t('New password')}</label>
+              <input id="resetPass" type="password" autoComplete="new-password" placeholder={t('At least 10 characters')} value={resetPass} onChange={(e) => setResetPass(e.target.value)} />
+            </div>
+            <div className="f-field">
+              <label htmlFor="resetConfirm">{t('Confirm new password')}</label>
+              <input id="resetConfirm" type="password" autoComplete="new-password" value={resetConfirm} onChange={(e) => setResetConfirm(e.target.value)} />
+            </div>
+          </div>
+          <div className="form-actions">
+            <button className="btn btn-ghost" onClick={closeModal}>
+              {t('Cancel')}
+            </button>
+            <button className="btn btn-violet" onClick={resetAccountPassword}>
+              {t('Reset password')}
             </button>
           </div>
         </div>

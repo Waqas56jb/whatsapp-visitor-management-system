@@ -64,7 +64,13 @@ import {
   listCompanyHosts,
   updateCompanyHost,
 } from '../controllers/hostController.js';
-import { rateLimit, requireAuth } from '../middleware/auth.js';
+import { loginRateLimit, rateLimit, requireAuth } from '../middleware/auth.js';
+import {
+  changeAdminPassword,
+  changeOwnAccountPassword,
+  me,
+  resetAccountPassword,
+} from '../controllers/passwordController.js';
 import { lookupPassEndpoint, validatePassEndpoint } from '../controllers/passController.js';
 import { whatsappQr, whatsappStatus } from '../controllers/whatsappController.js';
 
@@ -80,8 +86,10 @@ router.get('/health', (req, res) => res.json({ ok: true, service: 'whatsapp-vms'
 router.get('/whatsapp/status', whatsappStatus);
 router.get('/whatsapp/qr', whatsappQr);
 
-router.post('/auth/admin/login', adminLogin);
-router.post('/auth/client/login', clientLogin);
+router.post('/auth/admin/login', loginRateLimit(), adminLogin);
+router.post('/auth/client/login', loginRateLimit(), clientLogin);
+router.get('/auth/me', requireAuth('admin', 'host'), me);
+router.post('/auth/admin/password', requireAuth('admin'), rateLimit({ max: 10 }), changeAdminPassword);
 router.post('/visits/public', rateLimit({ max: 30 }), createPublicVisit);
 router.post('/passes/validate', rateLimit({ max: 20 }), validatePassEndpoint);
 router.get('/passes/info', rateLimit({ max: 40 }), lookupPassEndpoint);
@@ -110,6 +118,7 @@ router.patch('/accounts/:id/toggle', requireAuth('admin'), toggleAccount);
 router.patch('/accounts/:id/block', requireAuth('admin'), blockAccount);
 router.patch('/accounts/:id/unblock', requireAuth('admin'), unblockAccount);
 router.delete('/accounts/:id', requireAuth('admin'), deleteAccount);
+router.post('/accounts/:id/password', requireAuth('admin'), resetAccountPassword);
 router.get('/reports/summary', requireAuth('admin'), getReportsSummary);
 router.get('/reports/export', requireAuth('admin'), exportReport);
 router.get('/audit', requireAuth('admin'), listAudit);
@@ -124,6 +133,7 @@ router.get('/host/passes', requireAuth('host'), hostPasses);
 router.get('/host/history', requireAuth('host'), hostHistory);
 router.get('/host/notifications', requireAuth('host'), hostNotifications);
 router.get('/host/profile', requireAuth('host'), hostProfile);
+router.post('/host/password', requireAuth('host'), rateLimit({ max: 10 }), changeOwnAccountPassword);
 router.get('/host/staff', requireAuth('host'), listCompanyHosts);
 router.post('/host/staff', requireAuth('host'), createCompanyHost);
 router.patch('/host/staff/:id', requireAuth('host'), updateCompanyHost);

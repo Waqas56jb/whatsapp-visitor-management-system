@@ -141,25 +141,6 @@ export default function LoginScreen({ hidden, onSuccess }) {
               {loading ? t('Signing in…') : t('Sign in')}
             </button>
             {error ? <p className="auth-error">{error}</p> : null}
-            <div className="auth-demo">
-              <b>{t('Test login')}</b>
-              <p>
-                {t('Username')}: <code>admin</code>
-                <br />
-                {t('Password')}: <code>admin123</code>
-              </p>
-              <button
-                type="button"
-                className="auth-demo-fill"
-                onClick={() => {
-                  setUsername('admin');
-                  setPassword('admin123');
-                  setError('');
-                }}
-              >
-                {t('Fill test credentials')}
-              </button>
-            </div>
           </form>
         </div>
       </div>

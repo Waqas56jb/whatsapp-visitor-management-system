@@ -18,6 +18,7 @@ const files = [
   '007_restore_pin.sql',
   '008_company_whatsapp.sql',
   '009_visit_type_check.sql',
+  '010_password_changed_at.sql',
 ];
 
 try {

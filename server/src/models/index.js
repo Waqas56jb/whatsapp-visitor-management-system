@@ -5,6 +5,13 @@ import { normalizePhone } from '../utils/phone.js';
 export const Admin = {
   findByUsername: (username) =>
     queryOne(`SELECT * FROM ${T.admins} WHERE LOWER(username) = LOWER($1)`, [username]),
+  findById: (id) => queryOne(`SELECT * FROM ${T.admins} WHERE id = $1`, [id]),
+  // Sets a new password and stamps the change, which ends every session issued before it.
+  setPassword: (id, password_hash) =>
+    queryOne(
+      `UPDATE ${T.admins} SET password_hash = $2, password_changed_at = NOW() WHERE id = $1 RETURNING *`,
+      [id, password_hash]
+    ),
   create: (username, password_hash, name = 'Admin') =>
     queryOne(
       `INSERT INTO ${T.admins} (username, password_hash, name) VALUES ($1,$2,$3) RETURNING *`,
@@ -23,17 +30,11 @@ export const Account = {
        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
       [name, username, password_hash, role, status]
     ),
-  upsertLogin: ({ name, username, password_hash, role = 'Host', status = 'active' }) =>
+  // Sets a new password and stamps the change, which ends every session issued before it.
+  setPassword: (id, password_hash) =>
     queryOne(
-      `INSERT INTO ${T.accounts} (name, username, password_hash, role, status)
-       VALUES ($1,$2,$3,$4,$5)
-       ON CONFLICT (username) DO UPDATE
-         SET name = EXCLUDED.name,
-             password_hash = EXCLUDED.password_hash,
-             role = EXCLUDED.role,
-             status = EXCLUDED.status
-       RETURNING *`,
-      [name, username, password_hash, role, status]
+      `UPDATE ${T.accounts} SET password_hash = $2, password_changed_at = NOW() WHERE id = $1 RETURNING *`,
+      [id, password_hash]
     ),
   toggle: (id) =>
     queryOne(

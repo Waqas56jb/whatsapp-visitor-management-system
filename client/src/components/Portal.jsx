@@ -12,6 +12,7 @@ import {
   Clock,
   History,
   LayoutDashboard,
+  Lock,
   LogOut,
   Menu,
   MessagesSquare,
@@ -155,6 +156,10 @@ export default function Portal({ on, currentUser, initialView = 'overview', onBa
   const [profile, setProfile] = useState(null);
   const [pageLoading, setPageLoading] = useState(false);
   const [deciding, setDeciding] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
   const seenPending = useRef(new Set());
   const primed = useRef(false);
   const tRef = useRef(t);
@@ -212,6 +217,27 @@ export default function Portal({ on, currentUser, initialView = 'overview', onBa
   function switchView(name) {
     setView(name);
     setSidebarOpen(false);
+  }
+
+  async function changeOwnPassword(e) {
+    e.preventDefault();
+    if (!pwCurrent || !pwNew) return onToast(t('Please fill in every field'), true);
+    if (pwNew.length < 10) return onToast(t('The new password must be at least 10 characters.'), true);
+    if (pwNew !== pwConfirm) return onToast(t('The new password and its confirmation do not match.'), true);
+    setPwSaving(true);
+    try {
+      const { data } = await api.post('/host/password', { currentPassword: pwCurrent, newPassword: pwNew, confirmPassword: pwConfirm });
+      // The server ends every other session; this one continues with the new token.
+      setClientToken(data.token);
+      setPwCurrent('');
+      setPwNew('');
+      setPwConfirm('');
+      onToast(t('Password changed'));
+    } catch (err) {
+      onToast(err.response?.data?.error || t('Could not change the password'), true);
+    } finally {
+      setPwSaving(false);
+    }
   }
 
   async function decide(id, decision) {
@@ -639,6 +665,39 @@ export default function Portal({ on, currentUser, initialView = 'overview', onBa
                   </div>
                 </div>
               </div>
+              <form className="ap-panel ap-panel-gap" onSubmit={changeOwnPassword}>
+                <div className="ap-panel-head">
+                  <div className="ap-panel-title">
+                    <span className="ap-panel-ic">
+                      <Lock size={16} strokeWidth={2} />
+                    </span>
+                    <div>
+                      <h3>{t('Change password')}</h3>
+                      <p>{t('At least 10 characters. Other signed-in sessions will be signed out.')}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="ap-profile-grid">
+                  <div className="ap-f-field">
+                    <label htmlFor="pwCurrent">{t('Current password')}</label>
+                    <input id="pwCurrent" type="password" autoComplete="current-password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} />
+                  </div>
+                  <div className="ap-f-spacer" aria-hidden="true" />
+                  <div className="ap-f-field">
+                    <label htmlFor="pwNew">{t('New password')}</label>
+                    <input id="pwNew" type="password" autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} />
+                  </div>
+                  <div className="ap-f-field">
+                    <label htmlFor="pwConfirm">{t('Confirm new password')}</label>
+                    <input id="pwConfirm" type="password" autoComplete="new-password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} />
+                  </div>
+                </div>
+                <div className="ap-form-actions">
+                  <button className="ap-btn ap-btn-teal" type="submit" disabled={pwSaving}>
+                    <Lock size={14} strokeWidth={2.4} /> {t('Change password')}
+                  </button>
+                </div>
+              </form>
             </section>
           </div>
         </main>
