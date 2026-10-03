@@ -43,6 +43,23 @@ export function nowTime(now = new Date()) {
   return dayjs(now).tz(ORG_TIMEZONE).format('HH:mm');
 }
 
+// Today and the current time in a company's own time zone (falls back to the default zone).
+export function todayIn(timeZone, now = new Date()) {
+  try {
+    return dayjs(now).tz(timeZone || ORG_TIMEZONE).format('YYYY-MM-DD');
+  } catch {
+    return todayStamp(now);
+  }
+}
+
+export function nowTimeIn(timeZone, now = new Date()) {
+  try {
+    return dayjs(now).tz(timeZone || ORG_TIMEZONE).format('HH:mm');
+  } catch {
+    return nowTime(now);
+  }
+}
+
 function normalize(text) {
   return String(text || '')
     .toLowerCase()

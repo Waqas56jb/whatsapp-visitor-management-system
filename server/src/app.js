@@ -3,6 +3,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import { router } from './routes/index.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { requestMeter } from './services/metrics.js';
 
 const app = express();
 
@@ -42,6 +43,7 @@ app.use(
 );
 app.use(express.json({ limit: '8mb' }));
 app.use(morgan('dev'));
+app.use(requestMeter());
 app.use('/api', router);
 app.use(errorHandler);
 

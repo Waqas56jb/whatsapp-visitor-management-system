@@ -1,6 +1,8 @@
-// Organisation-wide knowledge base for the WhatsApp assistant (admin panel, super_admin and admin).
-import { Knowledge } from '../models/index.js';
+// The company's knowledge base for its WhatsApp assistant (internal FAQs, documents, websites).
+import { Audit, Knowledge } from '../models/index.js';
+import { actorName } from '../middleware/auth.js';
 import { extractFromUpload, extractFromWebsite } from '../services/extractKnowledge.js';
+import { enforceLimit } from '../services/limits.js';
 
 const KINDS = ['greeting', 'instruction', 'qa', 'rule', 'document', 'website', 'text'];
 
@@ -27,12 +29,15 @@ export async function createKnowledge(req, res) {
   const kind = KINDS.includes(req.body.kind) ? req.body.kind : 'qa';
   const answer = String(req.body.answer || '').trim();
   if (!answer) return res.status(400).json({ error: 'Add the text to save' });
+  if (!['greeting', 'instruction'].includes(kind)) await enforceLimit('knowledge_entries');
+  await enforceLimit('storage_mb', Buffer.byteLength(answer));
   const row = await Knowledge.create({
     kind,
     title: String(req.body.title || ''),
     question: String(req.body.question || ''),
     answer,
   });
+  await Audit.add({ actor: actorName(req), action: 'Added knowledge entry', details: `${kind}: ${row.title || row.question || answer.slice(0, 60)}` });
   res.status(201).json(mapRow(row));
 }
 
@@ -50,6 +55,7 @@ export async function updateKnowledge(req, res) {
 export async function deleteKnowledge(req, res) {
   const row = await Knowledge.remove(req.params.id);
   if (!row) return res.status(404).json({ error: 'Entry not found' });
+  await Audit.add({ actor: actorName(req), action: 'Deleted knowledge entry', details: `${row.kind}: ${row.title || row.question || String(row.answer).slice(0, 60)}` });
   res.json({ ok: true });
 }
 
@@ -72,32 +78,36 @@ export async function saveTraining(req, res) {
 }
 
 export async function uploadKnowledge(req, res) {
+  await enforceLimit('knowledge_entries');
   try {
     const extracted = await extractFromUpload(req.file);
     if (!extracted.text) return res.status(400).json({ error: 'No text could be read from that file' });
+    await enforceLimit('storage_mb', Buffer.byteLength(extracted.text));
     const row = await Knowledge.create({
-        kind: 'document',
+      kind: 'document',
       title: extracted.title,
       question: '',
       answer: extracted.text,
     });
     res.status(201).json(mapRow(row));
   } catch (err) {
-    res.status(400).json({ error: err.message || 'Could not read file' });
+    res.status(err.status || 400).json({ error: err.message || 'Could not read file' });
   }
 }
 
 export async function importWebsite(req, res) {
+  await enforceLimit('knowledge_entries');
   try {
     const extracted = await extractFromWebsite(req.body.url || req.body.link);
+    await enforceLimit('storage_mb', Buffer.byteLength(extracted.text || ''));
     const row = await Knowledge.create({
-        kind: 'website',
+      kind: 'website',
       title: extracted.title,
       question: extracted.url,
       answer: extracted.text,
     });
     res.status(201).json(mapRow(row));
   } catch (err) {
-    res.status(400).json({ error: err.message || 'Could not import that website' });
+    res.status(err.status || 400).json({ error: err.message || 'Could not import that website' });
   }
 }

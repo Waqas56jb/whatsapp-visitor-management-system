@@ -34,3 +34,7 @@ Thumbs.db
 .idea
 .vscode/*
 !.vscode/extensions.json
+
+# Per-company WhatsApp sessions
+auth_sessions/
+**/auth_sessions/

@@ -21,6 +21,7 @@ const files = [
   '010_password_changed_at.sql',
   '011_admin_roles_single_org.sql',
   '012_host_whatsapp_decisions.sql',
+  '013_multitenancy.sql',
 ];
 
 try {

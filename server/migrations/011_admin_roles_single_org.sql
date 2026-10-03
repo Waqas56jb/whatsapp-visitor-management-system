@@ -12,11 +12,13 @@ ALTER TABLE whatsapp_visitor_management_admins
 -- exists this does nothing, so re-running never promotes admins created later.
 UPDATE whatsapp_visitor_management_admins
    SET role = 'super_admin'
- WHERE NOT EXISTS (SELECT 1 FROM whatsapp_visitor_management_admins WHERE role = 'super_admin');
+ WHERE NOT EXISTS (SELECT 1 FROM whatsapp_visitor_management_admins WHERE role = 'super_admin')
+   AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'wvm_admins_role_scope_check');
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'wvm_admins_role_check') THEN
+  -- Skipped once the multi-company roles (013) are in place.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname IN ('wvm_admins_role_check', 'wvm_admins_role_scope_check')) THEN
     ALTER TABLE whatsapp_visitor_management_admins
       ADD CONSTRAINT wvm_admins_role_check CHECK (role IN ('super_admin', 'admin', 'reception')) NOT VALID;
     ALTER TABLE whatsapp_visitor_management_admins VALIDATE CONSTRAINT wvm_admins_role_check;

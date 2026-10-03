@@ -31,8 +31,17 @@ ALTER TABLE whatsapp_visitor_management_conversation_states
 ALTER TABLE whatsapp_visitor_management_conversation_states
   DROP CONSTRAINT IF EXISTS whatsapp_visitor_management_conversation_states_phone_number_key;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wvm_cstate_phone_acct
-  ON whatsapp_visitor_management_conversation_states(phone_number, account_id);
+-- Only before conversations became per company (013 replaces this with company_id + phone).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'whatsapp_visitor_management_conversation_states' AND column_name = 'company_id'
+  ) THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wvm_cstate_phone_acct
+      ON whatsapp_visitor_management_conversation_states(phone_number, account_id);
+  END IF;
+END $$;
 
 ALTER TABLE whatsapp_visitor_management_conversation_log
   ADD COLUMN IF NOT EXISTS account_id INTEGER;

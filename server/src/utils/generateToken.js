@@ -6,11 +6,11 @@ export function generateQrToken() {
 }
 
 export function generatePin() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 export function generateRef() {
-  return 'VMS-2026-' + Math.floor(100000 + Math.random() * 900000);
+  return `VMS-${new Date().getFullYear()}-${crypto.randomInt(100000, 1000000)}`;
 }
 
 export function passPayload(token) {

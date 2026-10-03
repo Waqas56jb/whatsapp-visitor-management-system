@@ -2,7 +2,7 @@
 //
 //   SEED_ADMIN_PASSWORD='…' npm run seed          (or run it and type the password when asked)
 //
-// Creates one super_admin login and demo hosts, visitors and visits.
+// Creates one platform super_admin login and demo hosts, visitors and visits in company 1.
 //
 // Refuses to run when NODE_ENV=production or when an admin already exists, so it can never
 // overwrite or add to a live system. No password is stored in this file or printed.
@@ -51,13 +51,12 @@ async function seed() {
   ]);
 
   // Demo hosts have no phone number, so no WhatsApp notification is ever sent to a stranger.
-  async function ensureHost(name, department, accountId = null) {
-    const existing = await queryOne(`SELECT * FROM ${T.hosts} WHERE LOWER(name) = LOWER($1)`, [name]);
+  async function ensureHost(name, department) {
+    const existing = await queryOne(`SELECT * FROM ${T.hosts} WHERE company_id = 1 AND LOWER(name) = LOWER($1)`, [name]);
     if (existing) return existing;
     return queryOne(
-      `INSERT INTO ${T.hosts} (name, department, phone, status, account_id)
-       VALUES ($1,$2,'','active',$3) RETURNING *`,
-      [name, department, accountId]
+      `INSERT INTO ${T.hosts} (company_id, name, department, phone, status) VALUES (1,$1,$2,'','active') RETURNING *`,
+      [name, department]
     );
   }
 
@@ -66,9 +65,9 @@ async function seed() {
   const h3 = await ensureHost('Tshepo Molefe', 'Finance');
 
   async function ensureVisitor(name, company) {
-    const existing = await queryOne(`SELECT * FROM ${T.visitors} WHERE LOWER(name) = LOWER($1)`, [name]);
+    const existing = await queryOne(`SELECT * FROM ${T.visitors} WHERE company_id = 1 AND LOWER(name) = LOWER($1)`, [name]);
     if (existing) return existing;
-    return queryOne(`INSERT INTO ${T.visitors} (name, company, status) VALUES ($1,$2,'active') RETURNING *`, [name, company]);
+    return queryOne(`INSERT INTO ${T.visitors} (company_id, name, company, status) VALUES (1,$1,$2,'active') RETURNING *`, [name, company]);
   }
 
   const v1 = await ensureVisitor('Michael Ntsima', 'University of Botswana');
@@ -80,8 +79,8 @@ async function seed() {
     if (existing) return existing;
     const approved = status === 'approved';
     return queryOne(
-      `INSERT INTO ${T.visits} (ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, qr_token, pin, decided_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, CASE WHEN $7 = 'pending' THEN NULL ELSE NOW() END)
+      `INSERT INTO ${T.visits} (company_id, ref_number, visitor_id, host_id, purpose, visit_date, visit_time, status, qr_token, pin, decided_at)
+       VALUES (1,$1,$2,$3,$4,$5,$6,$7,$8,$9, CASE WHEN $7 = 'pending' THEN NULL ELSE NOW() END)
        RETURNING *`,
       [
         ref,
@@ -105,7 +104,7 @@ async function seed() {
 
   const auditExists = await queryOne(`SELECT id FROM ${T.audit} LIMIT 1`);
   if (!auditExists) {
-    await query(`INSERT INTO ${T.audit} (actor, action, details) VALUES ('Admin', 'System initialized', 'Demo data seeded')`);
+    await query(`INSERT INTO ${T.audit} (actor, action, details, company_id) VALUES ('Admin', 'System initialized', 'Demo data seeded', 1)`);
   }
 
   console.log(`Seed complete. Super admin username: ${adminUsername}`);

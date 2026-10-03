@@ -22,8 +22,9 @@ export function mapHost(row) {
     dept: row.department,
     department: row.department,
     phone: row.phone,
+    office: row.office || '',
+    email: row.email || '',
     status: row.status,
-    account_id: row.account_id,
   };
 }
 
@@ -33,9 +34,13 @@ export function mapVisitor(row) {
     id: row.id,
     name: row.name,
     company: row.company,
+    phone: row.phone || '',
+    email: row.email || '',
+    profileType: row.profile_type || '',
     visits: Number(row.visit_count || 0),
     lastVisit: row.last_visit ? formatDateNice(row.last_visit) : '—',
     status: row.status,
+    createdAt: row.created_at,
   };
 }
 
@@ -57,13 +62,25 @@ export function mapVisit(row) {
     visitType: row.visit_type || 'official',
     visitorPhone: row.visitor_phone || row.visitor_profile_phone || null,
     usedAt: row.used_at || null,
+    checkedOutAt: row.checked_out_at || null,
+    kind: row.kind || 'visit',
+    appointmentType: row.appointment_type || '',
+    topic: row.topic || '',
+    flagged: Boolean(row.flagged),
+    flagReason: row.flag_reason || '',
+    screening: row.screening || {},
+    hostOffice: row.host_office || '',
+    decidedBy: row.decided_by || '',
+    createdAt: row.created_at,
   };
 }
 
 export function mapAudit(row) {
   if (!row) return null;
   return {
-    time: new Date(row.created_at).toLocaleString(),
+    id: row.id,
+    at: row.created_at,
+    time: new Date(row.created_at).toLocaleString('en-GB', { timeZone: process.env.ORG_TIMEZONE || 'Africa/Gaborone' }),
     actor: row.actor,
     action: row.action,
     details: row.details,

@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import { KNOWLEDGE_DEFAULTS } from '../config/knowledgeDefaults.js';
 import { ConversationLog, Knowledge, Visit } from '../models/index.js';
 import { formatDate } from '../utils/mappers.js';
+import { meter } from '../services/metrics.js';
 import { normalizeText } from './hostMatch.js';
 import { bestDefinition, bestSnippetScored, buildChunks, searchWithTopic, sectionAnswer, tokenize } from './knowledgeSearch.js';
 import { formatVisitDate, formatVisitTime, statusLabel, t } from './messages.js';
@@ -132,7 +133,10 @@ function plain(text) {
     .trim();
 }
 
-export async function answerVisitor({ phone, question, lang = 'en', orgName = 'Botho Innovations', hosts = [], slots = {}, pendingQuestion = '', topics = [] }) {
+// Returns { text, known }. known = false when the knowledge has no answer, so the chat can offer
+// a staff member or a request instead. useAi = false (plan without AI answers) uses only the
+// knowledge search.
+export async function answerVisitor({ phone, question, lang = 'en', orgName = 'our company', hosts = [], slots = {}, pendingQuestion = '', topics = [], useAi = true }) {
   const [kb, visits, transcript] = await Promise.all([loadKnowledge(), loadVisitorVisits(phone), loadTranscript(phone)]);
   const searchable = kb.rows.filter((r) => ['document', 'text', 'website', 'rule', 'qa'].includes(r.kind));
   const chunks = buildChunks(searchable);
@@ -141,7 +145,11 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
   if (section && !hits.some((h) => h.text.includes(section.text.slice(0, 60)))) {
     hits.unshift({ source: section.source, text: section.text, tokens: [], score: 99, matched: 1 });
   }
-  if (!process.env.OPENAI_API_KEY) return fallbackAnswer({ question, lang, visits, kb, hits, topics, chunks, rows: searchable });
+  const fallback = () => {
+    const text = fallbackAnswer({ question, lang, visits, kb, hits, topics, chunks, rows: searchable });
+    return { text, known: text !== t(lang, 'faq.fallback') };
+  };
+  if (!process.env.OPENAI_API_KEY || !useAi) return fallback();
 
   const language = lang === 'tn' ? 'Setswana' : 'English';
   const hostLines = hosts.map((h) => `${h.name}${h.department && h.department !== '—' ? ` (${h.department})` : ''}`).join('\n');
@@ -156,7 +164,7 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
     .join(', ');
 
   const system = [
-    `You are the WhatsApp receptionist of ${orgName} (Botswana) for visitor bookings.`,
+    `You are the WhatsApp virtual assistant of ${orgName} (Botswana) for visitors and customers.`,
     `Reply only in ${language}. If ${language} is Setswana, write natural, correct Setswana.`,
     'You have read the full chat history with this visitor (the earlier messages below). Use it to understand what they mean and never ask again for something already answered there.',
     topics.length
@@ -164,11 +172,11 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
       : '',
     'Answer the visitor’s latest message directly, warmly, and professionally, in one to three short sentences. Plain text only: no markdown, no asterisks, no bullet points.',
     'Facts about their own visit requests come ONLY from "Visitor’s visit requests" below — it is live from the database. Quote the reference, host, date, time, and status exactly. pending = waiting for the host to approve; approved = approved, the QR pass was sent on WhatsApp; rejected = declined by the host; cancelled = cancelled by the visitor; used = already checked in.',
-    'Visitors can cancel a visit by sending "cancel", check their visits by sending "status", and see a host’s free times by asking e.g. "free slots for Hamza tomorrow". Each visit takes a 30-minute slot and visitors are received during office hours.',
+    'Visitors use the WhatsApp menu: type MENU for the options (visitor registration, appointments, feedback, service requests, questions), APPOINTMENT to change or cancel a booking, STATUS to check requests, HUMAN to talk to a staff member. Each visit takes a 30-minute slot during office hours.',
     'When a request is pending, confirm it was sent to the host and that the visitor will be notified in this chat once the host approves or declines. Do not mention portals or internal systems.',
-    'Never invent a request, reference, host, date, time, status, policy, or price. If you do not know, say so and suggest asking at reception.',
-    'You cannot create, change, cancel, approve, or reject a booking yourself. To make a new booking the visitor just sends their details; to change one they send "new booking".',
-    'Do not ask for booking details — the system asks the next booking question itself after your reply.',
+    'Never invent a request, reference, host, date, time, status, policy, or price.',
+    'If the answer is not in the information below (and is not about their own visit requests), reply with exactly the single word UNKNOWN and nothing else.',
+    'You cannot create, change, cancel, approve, or reject a booking yourself; point the visitor to the menu options instead.',
     'Refuse programming, homework, and anything unrelated to visiting the company, politely.',
     `Visitor’s visit requests (newest first):\n${visitLines}`,
     inProgress ? `Booking currently being collected in this chat: ${inProgress}` : '',
@@ -198,10 +206,12 @@ export async function answerVisitor({ phone, question, lang = 'en', orgName = 'B
       max_tokens: 250,
       messages: [{ role: 'system', content: system }, ...history, { role: 'user', content: question }],
     });
+    meter('ai_calls');
     const reply = plain(completion.choices?.[0]?.message?.content);
-    if (reply && !/how can i (assist|help) you( today)?/i.test(reply)) return reply;
+    if (/^unknown\.?$/i.test(reply || '')) return { text: '', known: false };
+    if (reply && !/how can i (assist|help) you( today)?/i.test(reply)) return { text: reply, known: true };
   } catch (err) {
     console.error('Visitor answer failed:', err.message);
   }
-  return fallbackAnswer({ question, lang, visits, kb, hits, topics, chunks, rows: searchable });
+  return fallback();
 }

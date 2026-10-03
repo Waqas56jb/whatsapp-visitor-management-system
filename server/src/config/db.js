@@ -25,7 +25,8 @@ function buildDatabaseUrl() {
 
 export const pool = new Pool({
   connectionString: buildDatabaseUrl().replace(/[?&]sslmode=[^&]*/g, ''),
-  ssl: { rejectUnauthorized: false },
+  // DB_SSL=false only for a local test database without SSL.
+  ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
   max: 10,
 });
 

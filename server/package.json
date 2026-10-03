@@ -8,8 +8,7 @@
     "start": "node server.js",
     "test": "node --test test/*.test.js",
     "migrate": "node migrations/migrate.js",
-    "seed": "node migrations/seed.js",
-    "whatsapp:link": "node src/whatsapp/testConnection.js"
+    "seed": "node migrations/seed.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",
@@ -24,8 +23,10 @@
     "mammoth": "^1.12.3",
     "morgan": "^1.10.0",
     "multer": "^2.4.0",
+    "nodemailer": "^6.10.1",
     "openai": "^7.21.0",
     "pdf-parse": "^1.1.1",
+    "pdfkit": "^0.15.2",
     "pg": "^8.16.3",
     "pino": "^10.3.1",
     "qrcode": "^1.5.4",

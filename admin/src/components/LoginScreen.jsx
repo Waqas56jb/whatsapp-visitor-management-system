@@ -28,10 +28,24 @@ export default function LoginScreen({ hidden, onSuccess }) {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [platformName, setPlatformName] = useState('Botho VMS');
   const userRef = useRef(null);
 
   useEffect(() => {
+    api
+      .get('/public/config')
+      .then(({ data }) => data?.platformName && setPlatformName(data.platformName))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (!hidden && userRef.current) userRef.current.focus();
+    // Why the last session ended (company suspended, account blocked, maintenance…).
+    const notice = sessionStorage.getItem('botho_login_notice');
+    if (!hidden && notice) {
+      sessionStorage.removeItem('botho_login_notice');
+      setError(notice);
+    }
   }, [hidden]);
 
   async function doAdminLogin(e) {
@@ -73,22 +87,22 @@ export default function LoginScreen({ hidden, onSuccess }) {
         <aside className="auth-brand">
           <div className="auth-brand-top">
             <BrandMark />
-            <span>Botho Innovations</span>
+            <span>{platformName}</span>
           </div>
           <h2>
             {t('Secure visitor access,')}
             <em> {t('fully under control.')}</em>
           </h2>
-          <p>{t('Manage accounts, hosts, visits, and every gate event from one admin panel.')}</p>
+          <p>{t('One WhatsApp-first visitor platform for every company: visits, appointments, passes, feedback and service requests.')}</p>
           <ul className="auth-points">
             <li>
-              <ShieldCheck size={18} strokeWidth={2} /> {t('Accounts and roles')}
+              <ShieldCheck size={18} strokeWidth={2} /> {t('Each company fully isolated, with its own roles')}
             </li>
             <li>
-              <QrCode size={18} strokeWidth={2} /> {t('QR passes and gate checks')}
+              <QrCode size={18} strokeWidth={2} /> {t('QR passes and live gate traffic')}
             </li>
             <li>
-              <Users size={18} strokeWidth={2} /> {t('Full visitor audit trail')}
+              <Users size={18} strokeWidth={2} /> {t('Platform console for tenants, plans and health')}
             </li>
           </ul>
         </aside>
@@ -96,10 +110,10 @@ export default function LoginScreen({ hidden, onSuccess }) {
           <form className="auth-card" onSubmit={doAdminLogin}>
             <div className="auth-card-head">
               <span className="auth-chip">
-                <Sparkles size={14} strokeWidth={2.2} /> {t('Admin Panel')}
+                <Sparkles size={14} strokeWidth={2.2} /> {t('Sign in to your console')}
               </span>
               <h1>{t('Sign in')}</h1>
-              <p>{t('Use the credentials issued for this organisation.')}</p>
+              <p>{t('Platform staff and company staff both sign in here.')}</p>
             </div>
             <label className="auth-field">
               <span>{t('Username')}</span>

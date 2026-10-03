@@ -1,624 +1,307 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
-  Ban,
   BarChart3,
-  Building2,
-  CalendarDays,
-  Check,
-  ClipboardList,
-  Clock,
-  Download,
-  Inbox,
   BookOpen,
+  Building2,
+  ClipboardList,
+  Gauge,
   KeyRound,
+  Layers,
   LayoutDashboard,
-  Lock,
-  Smartphone,
-  UserRound,
   LogOut,
+  Megaphone,
   Menu,
+  MessageSquareHeart,
   MessagesSquare,
-  MoreHorizontal,
-  Plus,
   QrCode,
-  RefreshCw,
   ScanLine,
   ScrollText,
-  Search,
   Settings,
-  ShieldCheck,
+  ShieldAlert,
   UserCheck,
-  UserPlus,
+  UserCog,
+  UserRound,
   Users,
+  Wrench,
   X,
 } from 'lucide-react';
-import { toast as notify } from 'react-toastify';
-import CompanyWhatsApp from './components/CompanyWhatsApp';
-import Conversations from './components/Conversations';
-import GateValidator from './components/GateValidator';
-import KnowledgeBase from './components/KnowledgeBase';
 import LoginScreen from './components/LoginScreen';
 import ScreenLoader from './components/ScreenLoader';
-import api, { getAdminToken, setAdminToken } from './api/client';
-import { initials } from './lib/db';
+import api, { clearSession, getAdminToken, stopImpersonation } from './api/client';
 import { LanguageSwitch, useI18n } from './i18n';
+import { initials } from './ui';
+import Account from './pages/Account';
+import PlatformOverview from './pages/platform/Overview';
+import Companies from './pages/platform/Companies';
+import CompanyDetail from './pages/platform/CompanyDetail';
+import Plans from './pages/platform/Plans';
+import Metering from './pages/platform/Metering';
+import Health from './pages/platform/Health';
+import Announcements from './pages/platform/Announcements';
+import PlatformSettings from './pages/platform/PlatformSettings';
+import Team from './pages/platform/Team';
+import PlatformAudit from './pages/platform/PlatformAudit';
+import Dashboard from './pages/company/Dashboard';
+import Visits from './pages/company/Visits';
+import Visitors from './pages/company/Visitors';
+import Gate from './pages/company/Gate';
+import Passes from './pages/company/Passes';
+import ConversationsPage from './pages/company/ConversationsPage';
+import Feedback from './pages/company/Feedback';
+import ServiceRequests from './pages/company/ServiceRequests';
+import Hosts from './pages/company/Hosts';
+import Knowledge from './pages/company/Knowledge';
+import Staff from './pages/company/Staff';
+import Reports from './pages/company/Reports';
+import Audit from './pages/company/Audit';
+import CompanySettings from './pages/company/CompanySettings';
 
-const TITLES = {
-  dashboard: ['Dashboard', 'Visitor activity at a glance'],
-  visitors: ['Visitors', 'Everyone who has requested a visit'],
-  visits: ['Visit requests', 'Approve, reject, or review bookings'],
-  passes: ['QR & Passes', 'Every access pass issued'],
-  conversations: ['Conversations', 'Full WhatsApp threads with visitors'],
-  hosts: ['Hosts', 'People and departments visitors can book'],
-  knowledge: ['Knowledge base', 'What the WhatsApp assistant knows about the organisation'],
-  gate: ['Gate', 'Check visitors in and see who is expected today'],
-  reports: ['Reports', 'Totals and exportable records'],
-  audit: ['Audit log', 'Full history of system actions'],
-  admins: ['Sub-admins', 'Who can sign in to this panel, and what they can do'],
-  whatsapp: ['WhatsApp', 'The organisation’s WhatsApp number'],
-  settings: ['Settings', 'Organisation details'],
-  account: ['My account', 'Your profile, password and language'],
-};
+// Each page names the permission it needs (the server checks the same permission) and, for
+// company pages, the plan feature it belongs to.
+const PLATFORM_PAGES = [
+  { key: 'p-overview', label: 'Overview', sub: 'The whole platform at a glance', icon: LayoutDashboard, perm: 'platform.dashboard', el: PlatformOverview },
+  { key: 'p-companies', group: 'Tenants', label: 'Companies', sub: 'Create, manage, suspend and remove client companies', icon: Building2, perm: 'platform.companies.view', el: Companies },
+  { key: 'p-company', hidden: true, label: 'Company', sub: 'Profile, subscription, admins and lifecycle', icon: Building2, perm: 'platform.companies.view', el: CompanyDetail },
+  { key: 'p-plans', group: 'Tenants', label: 'Plans & features', sub: 'Subscription tiers and what each includes', icon: Layers, perm: 'platform.companies.view', el: Plans },
+  { key: 'p-metering', group: 'Monitoring', label: 'Metering & billing', sub: 'Storage, messages, API calls and revenue per company', icon: Gauge, perm: 'platform.metering.view', el: Metering },
+  { key: 'p-health', group: 'Monitoring', label: 'System health', sub: 'Uptime, load, latency and WhatsApp sessions', icon: Activity, perm: 'platform.health.view', el: Health },
+  { key: 'p-announcements', group: 'Support', label: 'Announcements', sub: 'Banners and emails to every company', icon: Megaphone, perm: 'platform.announcements.manage', el: Announcements },
+  { key: 'p-settings', group: 'Security', label: 'Platform settings', sub: 'Language, sign-in security and backups', icon: Settings, perm: 'platform.settings.manage', el: PlatformSettings },
+  { key: 'p-team', group: 'Security', label: 'Platform team', sub: 'Super admins, support and billing staff', icon: KeyRound, perm: 'platform.team.manage', el: Team },
+  { key: 'p-audit', group: 'Security', label: 'Audit log', sub: 'Every platform-level action', icon: ScrollText, perm: 'platform.audit.view', el: PlatformAudit },
+];
 
-// Which pages each role sees. The server enforces the same rules on every request.
-const STAFF_VIEWS = ['dashboard', 'visitors', 'visits', 'passes', 'conversations', 'hosts', 'knowledge', 'gate', 'reports', 'audit', 'account'];
-const VIEWS_BY_ROLE = {
-  super_admin: [...STAFF_VIEWS, 'admins', 'whatsapp', 'settings'],
-  admin: STAFF_VIEWS,
-  reception: ['gate', 'account'],
-};
-const HOME_VIEW = { super_admin: 'dashboard', admin: 'dashboard', reception: 'gate' };
+const COMPANY_PAGES = [
+  { key: 'dashboard', label: 'Dashboard', sub: 'Today at a glance', icon: LayoutDashboard, perm: 'company.dashboard', el: Dashboard },
+  { key: 'visits', group: 'Visitors', label: 'Visits & appointments', sub: 'Approve, decline, flag or review requests', icon: ClipboardList, perm: 'visits.view', el: Visits, count: 'pending' },
+  { key: 'visitors', group: 'Visitors', label: 'Visitors', sub: 'Profiles and visit history', icon: Users, perm: 'visitors.view', el: Visitors },
+  { key: 'gate', group: 'Visitors', label: 'Gate & live traffic', sub: 'Check visitors in and out; who is on site', icon: ScanLine, perm: 'gate.use', el: Gate },
+  { key: 'passes', group: 'Visitors', label: 'QR & passes', sub: 'Approved passes that can still be used', icon: QrCode, perm: 'passes.view', el: Passes },
+  { key: 'conversations', group: 'Visitors', label: 'Conversations', sub: 'WhatsApp chats, staff replies and handovers', icon: MessagesSquare, perm: 'conversations.view', el: ConversationsPage, count: 'handovers' },
+  { key: 'feedback', group: 'Engagement', label: 'Feedback', sub: 'Ratings, comments and complaints', icon: MessageSquareHeart, perm: 'feedback.view', feature: 'feedback', el: Feedback },
+  { key: 'service', group: 'Engagement', label: 'Service requests', sub: 'Tickets raised on WhatsApp', icon: Wrench, perm: 'service.view', feature: 'service_requests', el: ServiceRequests, count: 'requests' },
+  { key: 'hosts', group: 'Organisation', label: 'Hosts', sub: 'People and departments visitors can see', icon: UserCheck, perm: 'hosts.view', el: Hosts },
+  { key: 'knowledge', group: 'Organisation', label: 'Knowledge base', sub: 'What the WhatsApp assistant knows', icon: BookOpen, perm: 'knowledge.manage', feature: 'knowledge_base', el: Knowledge },
+  { key: 'staff', group: 'Organisation', label: 'Staff & roles', sub: 'Who can sign in, and what each role can do', icon: UserCog, perm: 'staff.manage', el: Staff },
+  { key: 'reports', group: 'Insights', label: 'Reports', sub: 'Volumes, peak hours and host activity', icon: BarChart3, perm: 'reports.view', el: Reports },
+  { key: 'audit', group: 'Insights', label: 'Audit log', sub: 'Everything that happened in this company', icon: ScrollText, perm: 'audit.view', el: Audit },
+  { key: 'settings', group: 'Settings', label: 'Company settings', sub: 'Profile, hours, rules, branding and integrations', icon: Settings, perm: 'settings.view', el: CompanySettings },
+];
 
-const ADMIN_ROLES = ['super_admin', 'admin', 'reception'];
-const ROLE_LABEL = { super_admin: 'Super admin', admin: 'Admin', reception: 'Reception' };
+const ACCOUNT_PAGE = { key: 'account', label: 'My account', sub: 'Your profile, password and language', icon: UserRound, perm: 'account.self', el: Account };
 
-const STATUS_LABEL = {
-  approved: 'Approved',
-  pending: 'Pending',
-  rejected: 'Rejected',
-  active: 'Active',
-  expired: 'Expired',
-  used: 'Checked in',
-  revoked: 'Revoked',
-  blocked: 'Blocked',
-  disabled: 'Disabled',
-  inactive: 'Inactive',
-  cancelled: 'Cancelled',
-};
-
-function tokenRef(token) {
-  if (!token) return '—';
-  if (token.length <= 14) return token;
-  return `${token.slice(0, 8)}…${token.slice(-4)}`;
-}
-
-function todayStamp() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function matches(query, ...fields) {
-  if (!query) return true;
-  const q = query.toLowerCase();
-  return fields.some((f) => String(f ?? '').toLowerCase().includes(q));
-}
-
-function visitTypeOf(v) {
-  return v.visitType === 'social' ? 'social' : 'official';
-}
-
-// Small Official / Social label for a visit.
-function TypeTag({ v }) {
-  const { t } = useI18n();
-  const type = visitTypeOf(v);
-  return <span className={`type-tag ${type}`}>{t(type === 'social' ? 'Social' : 'Official')}</span>;
-}
-
-function Badge({ status }) {
-  const { t } = useI18n();
-  const cls = STATUS_LABEL[status] ? status : 'active';
-  const Icon =
-    status === 'blocked'
-      ? Ban
-      : status === 'approved' || status === 'active' || status === 'used'
-        ? Check
-        : status === 'pending'
-          ? Clock
-          : status === 'rejected' || status === 'revoked'
-            ? X
-            : ShieldCheck;
+function BrandMark() {
   return (
-    <span className={`badge ${cls}`}>
-      <Icon size={11} strokeWidth={2.6} />
-      {t(STATUS_LABEL[status] || status)}
-    </span>
+    <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="sbBrandGrad" x1="0" y1="0" x2="40" y2="40">
+          <stop offset="0%" stopColor="#8B6BFF" />
+          <stop offset="100%" stopColor="#22E8C8" />
+        </linearGradient>
+      </defs>
+      <rect width="40" height="40" rx="11" fill="url(#sbBrandGrad)" />
+      <path d="M12 20a8 8 0 1 1 3.2 6.4L11 28l1.4-4.2A8 8 0 0 1 12 20Z" stroke="#0D0822" strokeWidth="2" fill="none" />
+      <path d="M17 19.5l2 2 4-4.2" stroke="#0D0822" strokeWidth="2" fill="none" />
+    </svg>
   );
 }
 
-function EmptyState({ icon: Icon, children }) {
-  return (
-    <>
-      <div className="big">
-        <Icon size={24} strokeWidth={1.7} />
-      </div>
-      {children}
-    </>
-  );
-}
-
-function NavBtn({ active, icon: Icon, children, onClick, count }) {
-  return (
-    <button className={'sb-link' + (active ? ' active' : '')} onClick={onClick}>
-      <span className="ic">
-        <Icon size={18} strokeWidth={1.85} />
-      </span>
-      {children}
-      {count ? <span className="sb-count">{count}</span> : null}
-    </button>
-  );
+function shade(hex, amount) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.max(0, Math.min(255, (n >> 16) + amount));
+  const g = Math.max(0, Math.min(255, ((n >> 8) & 255) + amount));
+  const b = Math.max(0, Math.min(255, (n & 255) + amount));
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
 export default function App() {
-  const { t, formatDate: formatLocalDate } = useI18n();
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [view, setView] = useState('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [visitFilter, setVisitFilter] = useState('all');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [query, setQuery] = useState('');
-  const [modal, setModal] = useState(null);
-  const [detail, setDetail] = useState(null);
-
-  const [hName, setHName] = useState('');
-  const [hDept, setHDept] = useState('');
-  const [hPhone, setHPhone] = useState('');
-  const [aName, setAName] = useState('');
-  const [aUser, setAUser] = useState('');
-  const [aPass, setAPass] = useState('');
-  const [aRole, setARole] = useState('admin');
-  const [vName, setVName] = useState('');
-  const [vCompany, setVCompany] = useState('');
-  const [vHost, setVHost] = useState('');
-  const [vPurpose, setVPurpose] = useState('');
-  const [vDate, setVDate] = useState('');
-  const [vTime, setVTime] = useState('');
-  const [setOrgName, setSetOrgName] = useState('Botho Innovations');
-  const [setPhone, setSetPhone] = useState('');
-  const [setEmail, setSetEmail] = useState('');
+  const { t } = useI18n();
+  const [loggedIn, setLoggedIn] = useState(() => Boolean(getAdminToken() && sessionStorage.getItem('botho_admin_in') === '1'));
   const [me, setMe] = useState(null);
-  const [pwCurrent, setPwCurrent] = useState('');
-  const [pwNew, setPwNew] = useState('');
-  const [pwConfirm, setPwConfirm] = useState('');
-  const [resetTarget, setResetTarget] = useState(null);
-  const [resetPass, setResetPass] = useState('');
-  const [resetConfirm, setResetConfirm] = useState('');
-
-  const [visits, setVisits] = useState([]);
-  const [hosts, setHosts] = useState([]);
-  const [visitors, setVisitors] = useState([]);
-  const [admins, setAdmins] = useState([]);
-  const [audit, setAudit] = useState([]);
-  const [pageLoading, setPageLoading] = useState(false);
-
-  const role = me?.role || null;
-  const allowedViews = role ? VIEWS_BY_ROLE[role] || [] : [];
-  const can = (name) => allowedViews.includes(name);
-  const isStaff = role === 'super_admin' || role === 'admin';
-
-  function toast(msg, isErr) {
-    if (isErr) notify.error(msg);
-    else notify.success(msg);
-  }
-
-  // Loads only what the signed-in role may see; the server refuses anything else.
-  async function fetchAll({ silent = false } = {}) {
-    if (!silent) setPageLoading(true);
+  const [view, setView] = useState(null);
+  const [params, setParams] = useState({});
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [counts, setCounts] = useState({});
+  const [dismissed, setDismissed] = useState(() => {
     try {
-      const { data: who } = await api.get('/auth/me');
-      setMe(who);
-      if (who.role === 'super_admin' || who.role === 'admin') {
-        const [v, h, vis, au, s, ad] = await Promise.all([
-          api.get('/visits'),
-          api.get('/hosts'),
-          api.get('/visitors'),
-          api.get('/audit'),
-          api.get('/settings').catch(() => ({ data: {} })),
-          who.role === 'super_admin' ? api.get('/admins') : Promise.resolve({ data: [] }),
-        ]);
-        setVisits(v.data || []);
-        setHosts(h.data || []);
-        setVisitors(vis.data || []);
-        setAudit(au.data || []);
-        setAdmins(ad.data || []);
-        if (s.data?.orgName) setSetOrgName(s.data.orgName);
-        if (s.data?.phone) setSetPhone(s.data.phone);
-        if (s.data?.email) setSetEmail(s.data.email);
-      }
+      return JSON.parse(sessionStorage.getItem('botho_dismissed') || '[]');
+    } catch {
+      return [];
+    }
+  });
+
+  async function loadMe() {
+    try {
+      const { data } = await api.get('/auth/me');
+      setMe(data);
+      return data;
     } catch (err) {
-      // A session that has ended (password changed, blocked, deleted) goes back to the login screen.
-      if (err.response?.status === 401) return doLogout();
-      toast(t('Could not load data from the server'), true);
-    } finally {
-      if (!silent) setPageLoading(false);
+      if ([401, 403, 503].includes(err.response?.status)) {
+        if (err.response?.data?.error) sessionStorage.setItem('botho_login_notice', err.response.data.error);
+        logout();
+      }
+      return null;
     }
   }
 
-  // Land on the role's home page, and never stay on a page the role cannot open.
   useEffect(() => {
-    if (role && !VIEWS_BY_ROLE[role]?.includes(view)) setView(HOME_VIEW[role] || 'account');
-  }, [role]);
-
-  useEffect(() => {
-    if (getAdminToken() && sessionStorage.getItem('botho_admin_in') === '1') setLoggedIn(true);
-  }, []);
-
-  useEffect(() => {
-    if (loggedIn) fetchAll();
+    if (loggedIn) loadMe();
   }, [loggedIn]);
 
+  const pages = useMemo(() => {
+    if (!me) return [];
+    const list = me.scope === 'platform' ? PLATFORM_PAGES : COMPANY_PAGES;
+    const perms = new Set(me.permissions);
+    return [...list, ACCOUNT_PAGE].filter((p) => perms.has(p.perm) && (!p.feature || me.company?.features?.[p.feature]));
+  }, [me]);
+
+  // Land on the first page the user may open; never stay on one they cannot.
   useEffect(() => {
-    if (hosts.length && !vHost) setVHost(hosts[0].name);
-  }, [hosts, vHost]);
+    if (!pages.length) return;
+    if (!view || !pages.some((p) => p.key === view)) setView(pages[0].key);
+  }, [pages]);
+
+  // Sidebar counters (pending approvals, open handovers, open tickets).
+  useEffect(() => {
+    if (!me || me.scope !== 'company') return undefined;
+    const perms = new Set(me.permissions);
+    async function load() {
+      const next = {};
+      try {
+        if (perms.has('company.dashboard')) {
+          const { data } = await api.get('/dashboard');
+          next.pending = data.stats.pending;
+          next.handovers = data.stats.open_handovers;
+          next.requests = data.stats.open_requests;
+        }
+      } catch {
+        /* counters are optional */
+      }
+      setCounts(next);
+    }
+    load();
+    const timer = setInterval(load, 30000);
+    return () => clearInterval(timer);
+  }, [me]);
+
+  // White-label: the company's colours in its console.
+  useEffect(() => {
+    const root = document.documentElement;
+    const branding = me?.company?.features?.white_label ? me.company.branding : null;
+    if (branding?.primaryColor) {
+      root.style.setProperty('--violet', branding.primaryColor);
+      root.style.setProperty('--violet-2', shade(branding.primaryColor, -24));
+      if (branding.accentColor) root.style.setProperty('--teal', branding.accentColor);
+    } else {
+      root.style.removeProperty('--violet');
+      root.style.removeProperty('--violet-2');
+      root.style.removeProperty('--teal');
+    }
+    const name = me?.company?.branding?.displayName || me?.company?.name || me?.platform?.name;
+    document.title = name ? `${name} — ${me?.scope === 'platform' ? t('Platform console') : t('Visitor console')}` : 'Visitor Management';
+  }, [me]);
 
   useEffect(() => {
     document.body.classList.toggle('drawer-open', sidebarOpen);
     return () => document.body.classList.remove('drawer-open');
   }, [sidebarOpen]);
 
-  function switchView(name) {
-    setView(name);
+  function go(key, next = {}) {
+    setView(key);
+    setParams(next);
     setSidebarOpen(false);
+    window.scrollTo({ top: 0 });
   }
 
-  function doLogout() {
-    setAdminToken(null);
+  function logout() {
+    clearSession();
     sessionStorage.removeItem('botho_admin_in');
-    location.reload();
+    setMe(null);
+    setView(null);
+    setLoggedIn(false);
   }
 
-  const closeModal = () => setModal(null);
-
-  const formatDate = (value) => formatLocalDate(value ? String(value).slice(0, 10) : value);
-
-  async function run(action, success, failure) {
-    try {
-      await action();
-      await fetchAll({ silent: true });
-      if (success) toast(success);
-    } catch (err) {
-      toast(err.response?.data?.error || failure, true);
-    }
+  async function returnToPlatform() {
+    stopImpersonation();
+    setMe(null);
+    setView(null);
+    const data = await loadMe();
+    if (data) setView('p-companies');
   }
 
-  const blockHost = (id) => run(() => api.patch(`/hosts/${id}/block`), t('Host blocked'), t('Could not block host'));
-  const unblockHost = (id) => run(() => api.patch(`/hosts/${id}/unblock`), t('Host unblocked'), t('Could not unblock host'));
-  const blockAdmin = (id) => run(() => api.patch(`/admins/${id}/block`), t('Sub-admin blocked'), t('Could not block this sub-admin'));
-  const unblockAdmin = (id) => run(() => api.patch(`/admins/${id}/unblock`), t('Sub-admin unblocked'), t('Could not unblock this sub-admin'));
-  const changeAdminRole = (id, newRole) =>
-    run(() => api.patch(`/admins/${id}/role`, { role: newRole }), t('Role updated'), t('Could not change the role'));
-  const revokePass = (id) => run(() => api.post(`/passes/${id}/revoke`), t('Pass revoked'), t('Could not revoke pass'));
-
-  function deleteHost(id, name) {
-    if (!window.confirm(t('Delete host {name}? This cannot be undone.', { name }))) return;
-    run(() => api.delete(`/hosts/${id}`, { data: { confirm: true } }), t('Host deleted'), t('Could not delete host'));
+  function dismiss(id) {
+    const next = [...dismissed, id];
+    setDismissed(next);
+    sessionStorage.setItem('botho_dismissed', JSON.stringify(next));
   }
 
-  function deleteAdmin(id, name) {
-    if (!window.confirm(t('Delete sub-admin {name}? This cannot be undone.', { name }))) return;
-    run(() => api.delete(`/admins/${id}`, { data: { confirm: true } }), t('Sub-admin deleted'), t('Could not delete this sub-admin'));
+  const page = pages.find((p) => p.key === view) || null;
+  const PageEl = page?.el;
+  const groups = [];
+  for (const p of pages.filter((x) => !x.hidden && x.key !== 'account')) {
+    const label = p.group || '';
+    let g = groups.find((x) => x.label === label);
+    if (!g) groups.push((g = { label, items: [] }));
+    g.items.push(p);
   }
-
-  function decideVisit(id, decision) {
-    run(
-      () => api.patch(`/visits/${id}/${decision === 'approved' ? 'approve' : 'reject'}`),
-      decision === 'approved' ? t('Visit approved — the QR pass was sent on WhatsApp') : t('Visit rejected — the visitor has been told'),
-      t('Could not update visit')
-    );
-  }
-
-  async function saveHost() {
-    const name = hName.trim();
-    const department = hDept.trim();
-    if (!name || !department) {
-      toast(t('Please fill in the name and department'), true);
-      return;
-    }
-    try {
-      await api.post('/hosts', { name, department, phone: hPhone.trim() });
-      closeModal();
-      setHName('');
-      setHDept('');
-      setHPhone('');
-      await fetchAll({ silent: true });
-      toast(t('Host added'));
-    } catch (err) {
-      toast(err.response?.data?.error || t('Could not add host'), true);
-    }
-  }
-
-  async function saveVisit() {
-    if (!vName.trim() || !vHost || !vDate) {
-      toast(t('Please fill in the visitor name, host, and date'), true);
-      return;
-    }
-    try {
-      await api.post('/visits', { name: vName.trim(), company: vCompany.trim(), host: vHost, purpose: vPurpose.trim(), date: vDate, time: vTime });
-      closeModal();
-      setVName('');
-      setVCompany('');
-      setVPurpose('');
-      setVDate('');
-      setVTime('');
-      await fetchAll({ silent: true });
-      toast(t('Visit request created'));
-    } catch (err) {
-      toast(err.response?.data?.error || t('Could not create visit'), true);
-    }
-  }
-
-  async function saveAdmin() {
-    if (!aName.trim() || !aUser.trim() || !aPass) {
-      toast(t('Please fill in every field'), true);
-      return;
-    }
-    if (aPass.length < 10) {
-      toast(t('The new password must be at least 10 characters.'), true);
-      return;
-    }
-    try {
-      await api.post('/admins', { name: aName.trim(), username: aUser.trim(), password: aPass, role: aRole });
-      closeModal();
-      setAName('');
-      setAUser('');
-      setAPass('');
-      setARole('admin');
-      await fetchAll({ silent: true });
-      toast(t('Sub-admin created'));
-    } catch (err) {
-      toast(err.response?.data?.error || t('Could not create this sub-admin'), true);
-    }
-  }
-
-  async function saveSettings() {
-    try {
-      await api.put('/settings', { orgName: setOrgName, phone: setPhone, email: setEmail });
-      toast(t('Settings saved'));
-    } catch {
-      toast(t('Could not save settings'), true);
-    }
-  }
-
-  async function changePassword() {
-    if (!pwCurrent || !pwNew) {
-      toast(t('Please fill in every field'), true);
-      return;
-    }
-    if (pwNew.length < 10) {
-      toast(t('The new password must be at least 10 characters.'), true);
-      return;
-    }
-    if (pwNew !== pwConfirm) {
-      toast(t('The new password and its confirmation do not match.'), true);
-      return;
-    }
-    try {
-      const { data } = await api.post('/auth/admin/password', { currentPassword: pwCurrent, newPassword: pwNew, confirmPassword: pwConfirm });
-      // The server ends every other session; this one continues with the new token.
-      setAdminToken(data.token);
-      setPwCurrent('');
-      setPwNew('');
-      setPwConfirm('');
-      toast(t('Password changed'));
-    } catch (err) {
-      toast(err.response?.data?.error || t('Could not change the password'), true);
-    }
-  }
-
-  function openReset(account) {
-    setResetTarget(account);
-    setResetPass('');
-    setResetConfirm('');
-    setModal('resetModal');
-  }
-
-  async function resetAdminPassword() {
-    if (resetPass.length < 10) {
-      toast(t('The new password must be at least 10 characters.'), true);
-      return;
-    }
-    if (resetPass !== resetConfirm) {
-      toast(t('The new password and its confirmation do not match.'), true);
-      return;
-    }
-    try {
-      await api.post(`/admins/${resetTarget.id}/password`, { newPassword: resetPass, confirmPassword: resetConfirm });
-      closeModal();
-      setResetPass('');
-      setResetConfirm('');
-      await fetchAll({ silent: true });
-      toast(t('Password reset for {name}', { name: resetTarget.name }));
-    } catch (err) {
-      toast(err.response?.data?.error || t('Could not reset the password'), true);
-    }
-  }
-
-  async function exportCSV(type) {
-    try {
-      const res = await api.get(`/reports/export?type=${type}`, { responseType: 'blob' });
-      const url = URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `botho-${type}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast(t('Export downloaded'));
-    } catch {
-      toast(t('Nothing to export yet'), true);
-    }
-  }
-
-  const today = todayStamp();
-  const pending = visits.filter((v) => v.status === 'pending');
-  const approved = visits.filter((v) => v.status === 'approved');
-  const checkedIn = visits.filter((v) => v.status === 'used');
-  const visitsToday = visits.filter((v) => String(v.date).slice(0, 10) === today);
-
-  const q = query.trim();
-  const shownVisitors = visitors.filter((v) => matches(q, v.name, v.company));
-  const shownVisits = visits
-    .filter((v) => visitFilter === 'all' || v.status === visitFilter)
-    .filter((v) => typeFilter === 'all' || visitTypeOf(v) === typeFilter)
-    .filter((v) => matches(q, v.ref, v.visitor, v.company, v.host, v.purpose));
-  const shownPasses = approved.filter((v) => matches(q, v.ref, v.visitor, v.pin));
-  const shownHosts = hosts.filter((h) => matches(q, h.name, h.dept, h.phone));
-  const shownAdmins = admins.filter((a) => matches(q, a.name, a.username, t(ROLE_LABEL[a.role] || a.role)));
-  const shownAudit = audit.filter((a) => matches(q, a.actor, a.action, a.details));
-
-  const depts = {};
-  visits.forEach((v) => {
-    const h = hosts.find((x) => x.name === v.host);
-    const d = h?.dept && h.dept !== '—' ? h.dept : t('Unassigned');
-    depts[d] = (depts[d] || 0) + 1;
-  });
-  const maxDept = Math.max(1, ...Object.values(depts));
-
-  const icons = {
-    Approved: [Check, 'var(--ok-bg)', 'var(--ok)'],
-    Rejected: [X, 'var(--bad-bg)', 'var(--bad)'],
-    Validated: [ScanLine, '#EAF3FF', '#2563EB'],
-    default: [Activity, '#EFE9FF', 'var(--violet-2)'],
-  };
-
-  function openVisitor(v) {
-    setDetail({
-      title: v.name,
-      rows: [
-        ['Company', v.company],
-        ['Total visits', v.visits],
-        ['Last visit', v.lastVisit],
-        ['Status', <Badge key="s" status={v.status} />],
-      ],
-    });
-    setModal('detailModal');
-  }
-
-  function openVisit(v) {
-    setDetail({
-      title: v.ref,
-      rows: [
-        ['Visitor', v.visitor],
-        ['Company', v.company || '—'],
-        ['Host', v.host],
-        ['Purpose', v.purpose],
-        ['Visit type', <TypeTag key="t" v={v} />],
-        ['Date / Time', `${formatDate(v.date)} · ${v.time}`],
-        ['Status', <Badge key="s" status={v.status} />],
-        ['Backup PIN', v.pin || '—'],
-        ['QR token', tokenRef(v.qrToken)],
-      ],
-    });
-    setModal('detailModal');
-  }
-
-  const [title, sub] = TITLES[view] || TITLES.account;
+  const branding = me?.company?.branding;
+  const brandName = me?.scope === 'company' ? branding?.displayName || me.company?.name : me?.platform?.name || 'Botho VMS';
+  const showLogo = me?.company?.features?.white_label && branding?.logo;
+  const banners = (me?.announcements || []).filter((a) => !dismissed.includes(a.id));
 
   return (
     <>
       <LoginScreen hidden={loggedIn} onSuccess={() => setLoggedIn(true)} />
-      <ScreenLoader show={loggedIn && pageLoading} label={t('Loading dashboard…')} />
+      <ScreenLoader show={loggedIn && !me} label={t('Loading your console…')} />
 
-      <div id="app" className={loggedIn ? 'on' : ''}>
+      <div id="app" className={loggedIn && me ? 'on' : ''}>
         <div className={'sidebar-backdrop' + (sidebarOpen ? ' open' : '')} onClick={() => setSidebarOpen(false)} />
         <div className="shell">
           <aside className={'sidebar' + (sidebarOpen ? ' open' : '')} id="sidebar">
             <div className="sb-brand">
-              <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
-                <defs>
-                  <linearGradient id="sbBrandGrad" x1="0" y1="0" x2="40" y2="40">
-                    <stop offset="0%" stopColor="#8B6BFF" />
-                    <stop offset="100%" stopColor="#22E8C8" />
-                  </linearGradient>
-                </defs>
-                <rect width="40" height="40" rx="11" fill="url(#sbBrandGrad)" />
-                <path d="M12 20a8 8 0 1 1 3.2 6.4L11 28l1.4-4.2A8 8 0 0 1 12 20Z" stroke="#0D0822" strokeWidth="2" fill="none" />
-                <path d="M17 19.5l2 2 4-4.2" stroke="#0D0822" strokeWidth="2" fill="none" />
-              </svg>
-              {t('Botho Admin')}
+              {showLogo ? <img className="sb-logo" src={branding.logo} alt="" /> : <BrandMark />}
+              <span className="sb-brand-text">
+                {brandName}
+                <small>{me?.scope === 'platform' ? t('Platform console') : me?.company?.planName ? t('{plan} plan', { plan: me.company.planName }) : ''}</small>
+              </span>
             </div>
             <nav className="sb-nav">
-              {can('dashboard') ? (
-                <NavBtn active={view === 'dashboard'} icon={LayoutDashboard} onClick={() => switchView('dashboard')}>
-                  {t('Dashboard')}
-                </NavBtn>
-              ) : null}
-              {isStaff ? (
-                <>
-                  <div className="sb-group-label">{t('Visitors')}</div>
-                  <NavBtn active={view === 'visitors'} icon={Users} onClick={() => switchView('visitors')}>
-                    {t('Visitors')}
-                  </NavBtn>
-                  <NavBtn active={view === 'visits'} icon={ClipboardList} onClick={() => switchView('visits')} count={pending.length}>
-                    {t('Visit requests')}
-                  </NavBtn>
-                  <NavBtn active={view === 'passes'} icon={QrCode} onClick={() => switchView('passes')}>
-                    {t('QR & Passes')}
-                  </NavBtn>
-                  <NavBtn active={view === 'conversations'} icon={MessagesSquare} onClick={() => switchView('conversations')}>
-                    {t('Conversations')}
-                  </NavBtn>
-                </>
-              ) : null}
-              {can('gate') ? (
-                <NavBtn active={view === 'gate'} icon={ScanLine} onClick={() => switchView('gate')}>
-                  {t('Gate')}
-                </NavBtn>
-              ) : null}
-              {isStaff ? (
-                <>
-                  <div className="sb-group-label">{t('Organisation')}</div>
-                  <NavBtn active={view === 'hosts'} icon={UserCheck} onClick={() => switchView('hosts')}>
-                    {t('Hosts')}
-                  </NavBtn>
-                  <NavBtn active={view === 'knowledge'} icon={BookOpen} onClick={() => switchView('knowledge')}>
-                    {t('Knowledge base')}
-                  </NavBtn>
-                  <div className="sb-group-label">{t('Insights')}</div>
-                  <NavBtn active={view === 'reports'} icon={BarChart3} onClick={() => switchView('reports')}>
-                    {t('Reports')}
-                  </NavBtn>
-                  <NavBtn active={view === 'audit'} icon={ScrollText} onClick={() => switchView('audit')}>
-                    {t('Audit log')}
-                  </NavBtn>
-                </>
-              ) : null}
-              {role === 'super_admin' ? (
-                <>
-                  <div className="sb-group-label">{t('Administration')}</div>
-                  <NavBtn active={view === 'admins'} icon={KeyRound} onClick={() => switchView('admins')}>
-                    {t('Sub-admins')}
-                  </NavBtn>
-                  <NavBtn active={view === 'whatsapp'} icon={Smartphone} onClick={() => switchView('whatsapp')}>
-                    {t('WhatsApp')}
-                  </NavBtn>
-                  <NavBtn active={view === 'settings'} icon={Settings} onClick={() => switchView('settings')}>
-                    {t('Settings')}
-                  </NavBtn>
-                </>
-              ) : null}
-              <NavBtn active={view === 'account'} icon={UserRound} onClick={() => switchView('account')}>
+              {groups.map((g) => (
+                <div key={g.label || 'main'}>
+                  {g.label ? <div className="sb-group-label">{t(g.label)}</div> : null}
+                  {g.items.map((p) => {
+                    const Icon = p.icon;
+                    const active = view === p.key || (p.key === 'p-companies' && view === 'p-company');
+                    return (
+                      <button key={p.key} className={'sb-link' + (active ? ' active' : '')} onClick={() => go(p.key)}>
+                        <span className="ic">
+                          <Icon size={18} strokeWidth={1.85} />
+                        </span>
+                        {t(p.label)}
+                        {p.count && counts[p.count] ? <span className="sb-count">{counts[p.count]}</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+              <div className="sb-group-label">{t('You')}</div>
+              <button className={'sb-link' + (view === 'account' ? ' active' : '')} onClick={() => go('account')}>
+                <span className="ic">
+                  <UserRound size={18} strokeWidth={1.85} />
+                </span>
                 {t('My account')}
-              </NavBtn>
+              </button>
             </nav>
             <div className="sb-foot">
               <div className="sb-user">
-                <div className="sb-avatar"></div>
+                <div className="sb-avatar sb-avatar-text">{initials(me?.name)}</div>
                 <div>
                   <b>{me?.name || ''}</b>
-                  <span>{role ? t(ROLE_LABEL[role]) : ''}</span>
+                  <span>{me?.roleLabel ? t(me.roleLabel) : ''}</span>
                 </div>
               </div>
-              <button className="sb-logout" onClick={doLogout}>
+              <button className="sb-logout" onClick={logout}>
                 <LogOut size={15} strokeWidth={2} />
                 {t('Sign out')}
               </button>
@@ -626,1086 +309,49 @@ export default function App() {
           </aside>
 
           <main className="main">
+            {me?.impersonating ? (
+              <div className="imp-banner">
+                <ShieldAlert size={16} />
+                <span>
+                  {t('You are signed in to {company} as its company admin ({role} {user}). Everything you do is recorded in both audit logs.', {
+                    company: me.company?.name,
+                    role: t(me.impersonating.byRoleLabel),
+                    user: me.impersonating.by,
+                  })}
+                </span>
+                <button className="btn btn-sm btn-ghost" onClick={returnToPlatform}>
+                  {t('Return to platform')}
+                </button>
+              </div>
+            ) : null}
+            {banners.map((a) => (
+              <div key={a.id} className={`ann-banner ${a.severity}`}>
+                <Megaphone size={16} />
+                <div>
+                  <b>{a.title}</b>
+                  {a.body ? <span> — {a.body}</span> : null}
+                </div>
+                <button className="ann-close" onClick={() => dismiss(a.id)} aria-label={t('Dismiss')}>
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
             <div className="topbar">
               <div className="topbar-lead">
                 <button className="menu-toggle" onClick={() => setSidebarOpen((o) => !o)} aria-label={t('Open menu')}>
                   <Menu size={20} strokeWidth={2} />
                 </button>
                 <div>
-                  <h2>{t(title)}</h2>
-                  <p className="sub">{t(sub)}</p>
+                  <h2>{page ? t(page.label) : ''}</h2>
+                  <p className="sub">{page ? t(page.sub) : ''}</p>
                 </div>
               </div>
               <div className="top-actions">
-                {isStaff ? (
-                  <div className="search-box">
-                    <Search size={16} strokeWidth={2} />
-                    <input
-                      placeholder={t('Search visitors, hosts, references…')}
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      aria-label={t('Search')}
-                    />
-                    {query ? (
-                      <button className="search-clear" type="button" onClick={() => setQuery('')} aria-label={t('Clear search')}>
-                        <X size={14} />
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
                 <LanguageSwitch />
               </div>
             </div>
-
-            <div className="content">
-              <section className={'view' + (view === 'dashboard' ? ' active' : '')}>
-                <div className="dash-hero">
-                  <div>
-                    <h3>{t('Welcome back')}</h3>
-                    <p>{t('Visitor traffic, pending approvals, and gate activity in one view.')}</p>
-                  </div>
-                  <div className="dash-hero-meta">
-                    <CalendarDays size={18} strokeWidth={1.9} />
-                    {formatLocalDate(new Date(), { weekday: true })}
-                  </div>
-                </div>
-                <div className="stat-row">
-                  <div className="stat-card">
-                    <div className="top">
-                      <div className="stat-ic" style={{ background: '#EFE9FF', color: 'var(--violet-2)' }}>
-                        <CalendarDays size={20} strokeWidth={1.9} />
-                      </div>
-                    </div>
-                    <b>{visitsToday.length}</b>
-                    <span className="lab">{t('Visits scheduled today')}</span>
-                  </div>
-                  <div className="stat-card">
-                    <div className="top">
-                      <div className="stat-ic" style={{ background: 'var(--warn-bg)', color: 'var(--warn)' }}>
-                        <Clock size={20} strokeWidth={1.9} />
-                      </div>
-                    </div>
-                    <b>{pending.length}</b>
-                    <span className="lab">{t('Pending approvals')}</span>
-                  </div>
-                  <div className="stat-card">
-                    <div className="top">
-                      <div className="stat-ic" style={{ background: 'var(--ok-bg)', color: 'var(--ok)' }}>
-                        <ShieldCheck size={20} strokeWidth={1.9} />
-                      </div>
-                    </div>
-                    <b>{approved.length}</b>
-                    <span className="lab">{t('Active passes')}</span>
-                  </div>
-                  <div className="stat-card">
-                    <div className="top">
-                      <div className="stat-ic" style={{ background: '#EAF3FF', color: '#2563EB' }}>
-                        <UserCheck size={20} strokeWidth={1.9} />
-                      </div>
-                    </div>
-                    <b>{hosts.filter((h) => h.status === 'active').length}</b>
-                    <span className="lab">{t('Active hosts')}</span>
-                  </div>
-                </div>
-
-                <div className="grid-2">
-                  <div className="panel">
-                    <div className="panel-head">
-                      <div className="panel-title">
-                        <span className="panel-ic">
-                          <ClipboardList size={16} strokeWidth={2} />
-                        </span>
-                        <div>
-                          <h3>{t('Recent visit requests')}</h3>
-                          <p>{t('Latest bookings across all hosts')}</p>
-                        </div>
-                      </div>
-                      <button className="btn btn-ghost btn-sm" onClick={() => switchView('visits')}>
-                        {t('View all')}
-                      </button>
-                    </div>
-                    <div className="table-wrap">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>{t('Visitor')}</th>
-                            <th>{t('Host')}</th>
-                            <th>{t('Date')}</th>
-                            <th>{t('Status')}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {visits.length ? (
-                            visits.slice(0, 5).map((v) => (
-                              <tr key={v.id}>
-                                <td data-label={t('Visitor')}>
-                                  <div className="row-flex">
-                                    <div className="avatar-sm">{initials(v.visitor)}</div>
-                                    <div>
-                                      <div className="cell-main">{v.visitor}</div>
-                                      <div className="cell-sub">{v.ref}</div>
-                                    </div>
-                                  </div>
-                                </td>
-                                <td data-label={t('Host')}>{v.host}</td>
-                                <td data-label={t('Date')}>{formatDate(v.date)}</td>
-                                <td data-label={t('Status')}>
-                                  <Badge status={v.status} />
-                                </td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan="4" className="empty">
-                                <EmptyState icon={Inbox}>{t('No visit requests yet')}</EmptyState>
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                  <div className="panel">
-                    <div className="panel-head">
-                      <div className="panel-title">
-                        <span className="panel-ic">
-                          <Activity size={16} strokeWidth={2} />
-                        </span>
-                        <div>
-                          <h3>{t('Activity feed')}</h3>
-                          <p>{t('Latest system events')}</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="feed">
-                      {audit.length ? (
-                        audit.slice(0, 6).map((a, i) => {
-                          const key = Object.keys(icons).find((k) => a.action.includes(k)) || 'default';
-                          const [Icon, bg, col] = icons[key];
-                          return (
-                            <div className="feed-item" key={i}>
-                              <div className="feed-dot" style={{ background: bg, color: col }}>
-                                <Icon size={15} strokeWidth={2.1} />
-                              </div>
-                              <div>
-                                <p>
-                                  <b>{a.actor}</b> — {t(a.action)}
-                                </p>
-                                <span>{a.time}</span>
-                              </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div className="empty">
-                          <EmptyState icon={Clock}>{t('No activity yet')}</EmptyState>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'visitors' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <Users size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('All visitors')}</h3>
-                        <p>{t('Everyone who has requested a visit')}</p>
-                      </div>
-                    </div>
-                    <span className="badge active">{t('{count} total', { count: shownVisitors.length })}</span>
-                  </div>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>{t('Visitor')}</th>
-                          <th>{t('Company')}</th>
-                          <th>{t('Visits')}</th>
-                          <th>{t('Last visit')}</th>
-                          <th>{t('Status')}</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {shownVisitors.length ? (
-                          shownVisitors.map((v) => (
-                            <tr key={v.id}>
-                              <td data-label={t('Visitor')}>
-                                <div className="row-flex">
-                                  <div className="avatar-sm">{initials(v.name)}</div>
-                                  <div className="cell-main">{v.name}</div>
-                                </div>
-                              </td>
-                              <td data-label={t('Company')}>{v.company}</td>
-                              <td data-label={t('Visits')}>{v.visits}</td>
-                              <td data-label={t('Last visit')}>{v.lastVisit}</td>
-                              <td data-label={t('Status')}>
-                                <Badge status={v.status} />
-                              </td>
-                              <td data-label={t('Actions')}>
-                                <button className="btn-icon" onClick={() => openVisitor(v)} aria-label={t('View details')}>
-                                  <MoreHorizontal size={16} />
-                                </button>
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan="6" className="empty">
-                              <EmptyState icon={Users}>{q ? t('No results for "{query}"', { query: q }) : t('No visitors yet')}</EmptyState>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'visits' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <ClipboardList size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Visit requests')}</h3>
-                        <p>{t('Approve, reject, or review any request')}</p>
-                      </div>
-                    </div>
-                    <div className="head-actions">
-                      <select className="filter-select" value={visitFilter} onChange={(e) => setVisitFilter(e.target.value)} aria-label={t('Filter by status')}>
-                        <option value="all">{t('All statuses')}</option>
-                        <option value="pending">{t('Pending')}</option>
-                        <option value="approved">{t('Approved')}</option>
-                        <option value="rejected">{t('Rejected')}</option>
-                        <option value="used">{t('Checked in')}</option>
-                        <option value="cancelled">{t('Cancelled')}</option>
-                      </select>
-                      <select className="filter-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label={t('Filter by visit type')}>
-                        <option value="all">{t('All visit types')}</option>
-                        <option value="official">{t('Official')}</option>
-                        <option value="social">{t('Social')}</option>
-                      </select>
-                      <button className="btn btn-violet btn-sm" onClick={() => setModal('visitModal')}>
-                        <Plus size={14} strokeWidth={2.4} /> {t('New request')}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>{t('Reference')}</th>
-                          <th>{t('Visitor')}</th>
-                          <th>{t('Host')}</th>
-                          <th>{t('Purpose')}</th>
-                          <th>{t('Date / Time')}</th>
-                          <th>{t('Status')}</th>
-                          <th>{t('Actions')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {shownVisits.length ? (
-                          shownVisits.map((v) => (
-                            <tr key={v.id}>
-                              <td className="cell-main nowrap" data-label={t('Reference')}>
-                                {v.ref}
-                              </td>
-                              <td data-label={t('Visitor')}>
-                                <div className="cell-main">{v.visitor}</div>
-                                {v.company ? <div className="cell-sub">{v.company}</div> : null}
-                              </td>
-                              <td data-label={t('Host')}>{v.host}</td>
-                              <td data-label={t('Purpose')}>
-                                <div>{v.purpose}</div>
-                                <TypeTag v={v} />
-                              </td>
-                              <td data-label={t('Date / Time')} className="nowrap">
-                                {formatDate(v.date)} · {v.time}
-                              </td>
-                              <td data-label={t('Status')}>
-                                <Badge status={v.status} />
-                              </td>
-                              <td data-label={t('Actions')}>
-                                <div className="row-actions">
-                                  {v.status === 'pending' ? (
-                                    <>
-                                      <button className="btn btn-sm btn-teal" onClick={() => decideVisit(v.id, 'approved')}>
-                                        <Check size={13} strokeWidth={2.5} /> {t('Approve')}
-                                      </button>
-                                      <button className="btn btn-sm btn-danger" onClick={() => decideVisit(v.id, 'rejected')}>
-                                        <X size={13} strokeWidth={2.5} /> {t('Reject')}
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <button className="btn-icon" onClick={() => openVisit(v)} aria-label={t('View details')}>
-                                      <MoreHorizontal size={16} />
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan="7" className="empty">
-                              <EmptyState icon={ClipboardList}>{t('No requests match this filter')}</EmptyState>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'passes' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <QrCode size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('QR & access passes')}</h3>
-                        <p>{t('Approved passes that can still be used at the gate')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>{t('Reference')}</th>
-                          <th>{t('Visitor')}</th>
-                          <th>{t('Backup PIN')}</th>
-                          <th>{t('QR token')}</th>
-                          <th>{t('Visit date')}</th>
-                          <th>{t('Status')}</th>
-                          <th>{t('Actions')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {shownPasses.length ? (
-                          shownPasses.map((v) => (
-                            <tr key={v.id}>
-                              <td className="cell-main nowrap" data-label={t('Reference')}>
-                                {v.ref}
-                              </td>
-                              <td data-label={t('Visitor')}>{v.visitor}</td>
-                              <td data-label={t('Backup PIN')}>{v.pin || '—'}</td>
-                              <td data-label={t('QR token')}>{tokenRef(v.qrToken)}</td>
-                              <td data-label={t('Visit date')}>{formatDate(v.date)}</td>
-                              <td data-label={t('Status')}>
-                                <Badge status="active" />
-                              </td>
-                              <td data-label={t('Actions')}>
-                                <button className="btn btn-sm btn-danger" onClick={() => revokePass(v.id)}>
-                                  <X size={13} strokeWidth={2.5} /> {t('Revoke')}
-                                </button>
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan="7" className="empty">
-                              <EmptyState icon={QrCode}>{t('No active passes')}</EmptyState>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'conversations' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <MessagesSquare size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('WhatsApp conversations')}</h3>
-                        <p>{t('Every incoming and outgoing message, grouped by visitor')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  {view === 'conversations' ? <Conversations /> : null}
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'hosts' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <UserCheck size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Hosts')}</h3>
-                        <p>{t('Visitors can only book people on this list')}</p>
-                      </div>
-                    </div>
-                    <button className="btn btn-violet btn-sm" onClick={() => setModal('hostModal')}>
-                      <Plus size={14} strokeWidth={2.4} /> {t('Add host')}
-                    </button>
-                  </div>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>{t('Host')}</th>
-                          <th>{t('Department')}</th>
-                          <th>{t('Personal WhatsApp')}</th>
-                          <th>{t('Visits hosted')}</th>
-                          <th>{t('Status')}</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {shownHosts.length ? (
-                          shownHosts.map((h) => (
-                            <tr key={h.id}>
-                              <td data-label={t('Host')}>
-                                <div className="row-flex">
-                                  <div className="avatar-sm">{initials(h.name)}</div>
-                                  <div className="cell-main">{h.name}</div>
-                                </div>
-                              </td>
-                              <td data-label={t('Department')}>{h.dept && h.dept !== '—' ? h.dept : '—'}</td>
-                              <td data-label={t('Personal WhatsApp')} className="nowrap">
-                                {h.phone ? `+${String(h.phone).replace(/\D/g, '')}` : '—'}
-                              </td>
-                              <td data-label={t('Visits hosted')}>{visits.filter((v) => v.host === h.name).length}</td>
-                              <td data-label={t('Status')}>
-                                <Badge status={h.status} />
-                              </td>
-                              <td data-label={t('Actions')}>
-                                <div className="row-actions">
-                                  {h.status === 'blocked' ? (
-                                    <button className="btn btn-sm btn-ghost" onClick={() => unblockHost(h.id)}>
-                                      {t('Unblock')}
-                                    </button>
-                                  ) : (
-                                    <button className="btn btn-sm btn-ghost" onClick={() => blockHost(h.id)}>
-                                      {t('Block')}
-                                    </button>
-                                  )}
-                                  <button className="btn btn-sm btn-danger" onClick={() => deleteHost(h.id, h.name)}>
-                                    {t('Delete')}
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan="6" className="empty">
-                              <EmptyState icon={UserCheck}>{t('No hosts added yet')}</EmptyState>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'admins' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <KeyRound size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Sub-admins')}</h3>
-                        <p>{t('Super admins manage everything. Admins run daily operations. Reception uses the gate only.')}</p>
-                      </div>
-                    </div>
-                    <button className="btn btn-violet btn-sm" onClick={() => setModal('adminModal')}>
-                      <UserPlus size={14} strokeWidth={2.4} /> {t('Add sub-admin')}
-                    </button>
-                  </div>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>{t('Name')}</th>
-                          <th>{t('Username')}</th>
-                          <th>{t('Role')}</th>
-                          <th>{t('Created')}</th>
-                          <th>{t('Status')}</th>
-                          <th>{t('Actions')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {shownAdmins.length ? (
-                          shownAdmins.map((a) => {
-                            const self = me?.username === a.username;
-                            return (
-                              <tr key={a.id}>
-                                <td className="cell-main" data-label={t('Name')}>
-                                  {a.name}
-                                  {self ? <div className="cell-sub">{t('You')}</div> : null}
-                                </td>
-                                <td data-label={t('Username')}>{a.username}</td>
-                                <td data-label={t('Role')}>
-                                  {self ? (
-                                    t(ROLE_LABEL[a.role])
-                                  ) : (
-                                    <select
-                                      className="filter-select"
-                                      value={a.role}
-                                      onChange={(e) => changeAdminRole(a.id, e.target.value)}
-                                      aria-label={t('Role')}
-                                    >
-                                      {ADMIN_ROLES.map((r) => (
-                                        <option key={r} value={r}>
-                                          {t(ROLE_LABEL[r])}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  )}
-                                </td>
-                                <td data-label={t('Created')}>{a.created}</td>
-                                <td data-label={t('Status')}>
-                                  <Badge status={a.status} />
-                                </td>
-                                <td data-label={t('Actions')}>
-                                  {self ? (
-                                    <span className="cell-sub">{t('Change your own password in My account')}</span>
-                                  ) : (
-                                    <div className="row-actions">
-                                      {a.status === 'blocked' ? (
-                                        <button className="btn btn-sm btn-ghost" onClick={() => unblockAdmin(a.id)}>
-                                          {t('Unblock')}
-                                        </button>
-                                      ) : (
-                                        <button className="btn btn-sm btn-ghost" onClick={() => blockAdmin(a.id)}>
-                                          {t('Block')}
-                                        </button>
-                                      )}
-                                      <button className="btn btn-sm btn-ghost" onClick={() => openReset(a)}>
-                                        {t('Reset password')}
-                                      </button>
-                                      <button className="btn btn-sm btn-danger" onClick={() => deleteAdmin(a.id, a.name)}>
-                                        {t('Delete')}
-                                      </button>
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })
-                        ) : (
-                          <tr>
-                            <td colSpan="6" className="empty">
-                              <EmptyState icon={KeyRound}>{t('No sub-admins yet')}</EmptyState>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'knowledge' ? ' active' : '')}>
-                {view === 'knowledge' ? <KnowledgeBase onToast={toast} /> : null}
-              </section>
-
-              <section className={'view' + (view === 'gate' ? ' active' : '')}>
-                {view === 'gate' ? <GateValidator onToast={toast} /> : null}
-              </section>
-
-              <section className={'view' + (view === 'whatsapp' ? ' active' : '')}>
-                {view === 'whatsapp' ? <CompanyWhatsApp onToast={toast} /> : null}
-              </section>
-
-              <section className={'view' + (view === 'reports' ? ' active' : '')}>
-                <div className="stat-row">
-                  <div className="stat-card">
-                    <div className="top">
-                      <div className="stat-ic" style={{ background: '#EFE9FF', color: 'var(--violet-2)' }}>
-                        <ClipboardList size={20} strokeWidth={1.9} />
-                      </div>
-                    </div>
-                    <b>{visits.length}</b>
-                    <span className="lab">{t('Total visit requests')}</span>
-                  </div>
-                  <div className="stat-card">
-                    <div className="top">
-                      <div className="stat-ic" style={{ background: 'var(--ok-bg)', color: 'var(--ok)' }}>
-                        <Check size={20} strokeWidth={1.9} />
-                      </div>
-                    </div>
-                    <b>{approved.length + checkedIn.length}</b>
-                    <span className="lab">{t('Approved')}</span>
-                  </div>
-                  <div className="stat-card">
-                    <div className="top">
-                      <div className="stat-ic" style={{ background: 'var(--bad-bg)', color: 'var(--bad)' }}>
-                        <X size={20} strokeWidth={1.9} />
-                      </div>
-                    </div>
-                    <b>{visits.filter((v) => v.status === 'rejected').length}</b>
-                    <span className="lab">{t('Rejected')}</span>
-                  </div>
-                  <div className="stat-card">
-                    <div className="top">
-                      <div className="stat-ic" style={{ background: '#EAF3FF', color: '#2563EB' }}>
-                        <ScanLine size={20} strokeWidth={1.9} />
-                      </div>
-                    </div>
-                    <b>{checkedIn.length}</b>
-                    <span className="lab">{t('Checked in at the gate')}</span>
-                  </div>
-                </div>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <Download size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Export data')}</h3>
-                        <p>{t('Download records for compliance or offline review')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="export-row">
-                    <button className="btn btn-ghost" onClick={() => exportCSV('visits')}>
-                      <Download size={15} /> {t('Visits (CSV)')}
-                    </button>
-                    <button className="btn btn-ghost" onClick={() => exportCSV('visitors')}>
-                      <Download size={15} /> {t('Visitors (CSV)')}
-                    </button>
-                    <button className="btn btn-ghost" onClick={() => exportCSV('audit')}>
-                      <Download size={15} /> {t('Audit log (CSV)')}
-                    </button>
-                  </div>
-                </div>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <Building2 size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Visits by department')}</h3>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="dept-bars">
-                    {Object.keys(depts).length ? (
-                      Object.entries(depts)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([d, c]) => (
-                          <div className="dept-bar" key={d}>
-                            <div className="dept-bar-head">
-                              <span>{d}</span>
-                              <b>{c}</b>
-                            </div>
-                            <div className="dept-bar-track">
-                              <div className="dept-bar-fill" style={{ width: `${(c / maxDept) * 100}%` }} />
-                            </div>
-                          </div>
-                        ))
-                    ) : (
-                      <p className="mini-note" style={{ padding: 0 }}>
-                        {t('No data yet')}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'audit' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <ScrollText size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Audit log')}</h3>
-                        <p>{t('Every approval, rejection, gate scan, and account change')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>{t('Time')}</th>
-                          <th>{t('Actor')}</th>
-                          <th>{t('Action')}</th>
-                          <th>{t('Details')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {shownAudit.length ? (
-                          shownAudit.map((a, i) => (
-                            <tr key={i}>
-                              <td className="cell-sub nowrap" data-label={t('Time')}>
-                                {a.time}
-                              </td>
-                              <td className="cell-main" data-label={t('Actor')}>
-                                {a.actor}
-                              </td>
-                              <td data-label={t('Action')}>{t(a.action)}</td>
-                              <td className="cell-sub" data-label={t('Details')}>
-                                {a.details}
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan="4" className="empty">
-                              <EmptyState icon={ScrollText}>{t('No audit events yet')}</EmptyState>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'settings' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <Building2 size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Organisation')}</h3>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="form-grid">
-                    <div className="f-field">
-                      <label htmlFor="setOrgName">{t('Organisation name')}</label>
-                      <input id="setOrgName" value={setOrgName} onChange={(e) => setSetOrgName(e.target.value)} />
-                    </div>
-                    <div className="f-field">
-                      <label htmlFor="setPhone">{t('Company WhatsApp number')}</label>
-                      <input id="setPhone" value={setPhone} onChange={(e) => setSetPhone(e.target.value)} placeholder="+267 71 000 000" />
-                    </div>
-                    <div className="f-field span2">
-                      <label htmlFor="setEmail">{t('Support email')}</label>
-                      <input id="setEmail" value={setEmail} onChange={(e) => setSetEmail(e.target.value)} />
-                    </div>
-                  </div>
-                  <div className="form-actions">
-                    <button className="btn btn-violet" onClick={saveSettings}>
-                      {t('Save changes')}
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              <section className={'view' + (view === 'account' ? ' active' : '')}>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <UserRound size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Your profile')}</h3>
-                        <p>{t('Your name and role are managed by a super admin.')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="form-grid">
-                    <div className="f-field">
-                      <label htmlFor="meName">{t('Name')}</label>
-                      <input id="meName" value={me?.name || ''} readOnly disabled />
-                    </div>
-                    <div className="f-field">
-                      <label htmlFor="meUser">{t('Username')}</label>
-                      <input id="meUser" value={me?.username || ''} readOnly disabled />
-                    </div>
-                    <div className="f-field">
-                      <label htmlFor="meRole">{t('Role')}</label>
-                      <input id="meRole" value={role ? t(ROLE_LABEL[role]) : ''} readOnly disabled />
-                    </div>
-                  </div>
-                </div>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <Lock size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Change password')}</h3>
-                        <p>{t('At least 10 characters. Other signed-in sessions will be signed out.')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="form-grid">
-                    <div className="f-field span2">
-                      <label htmlFor="pwCurrent">{t('Current password')}</label>
-                      <input id="pwCurrent" type="password" autoComplete="current-password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} />
-                    </div>
-                    <div className="f-field">
-                      <label htmlFor="pwNew">{t('New password')}</label>
-                      <input id="pwNew" type="password" autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} />
-                    </div>
-                    <div className="f-field">
-                      <label htmlFor="pwConfirm">{t('Confirm new password')}</label>
-                      <input id="pwConfirm" type="password" autoComplete="new-password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} />
-                    </div>
-                  </div>
-                  <div className="form-actions">
-                    <button className="btn btn-violet" onClick={changePassword}>
-                      {t('Change password')}
-                    </button>
-                  </div>
-                </div>
-                <div className="panel">
-                  <div className="panel-head">
-                    <div className="panel-title">
-                      <span className="panel-ic">
-                        <Settings size={16} strokeWidth={2} />
-                      </span>
-                      <div>
-                        <h3>{t('Preferences')}</h3>
-                        <p>{t('Language and data')}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="pref-rows">
-                    <div className="pref-row">
-                      <div>
-                        <b>{t('Language')}</b>
-                        <p>{t('English is the default. Setswana is available for the whole panel.')}</p>
-                      </div>
-                      <LanguageSwitch className="lang-switch-lg" />
-                    </div>
-                    <div className="pref-row">
-                      <div>
-                        <b>{t('Refresh data')}</b>
-                        <p>{t('Reload visits, hosts, and settings from the server')}</p>
-                      </div>
-                      <button
-                        className="btn btn-ghost"
-                        onClick={async () => {
-                          await fetchAll();
-                          toast(t('Data refreshed'));
-                        }}
-                      >
-                        <RefreshCw size={15} /> {t('Refresh')}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </section>
-            </div>
+            <div className="content">{me && PageEl ? <PageEl key={`${view}-${JSON.stringify(params)}`} me={me} go={go} params={params} refreshMe={loadMe} /> : null}</div>
           </main>
-        </div>
-      </div>
-
-      <div className={'modal-bg' + (modal === 'hostModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
-        <div className="modal" role="dialog" aria-modal="true" aria-label={t('Add a host')}>
-          <div className="modal-head">
-            <h3>{t('Add a host')}</h3>
-            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
-              <X size={14} strokeWidth={2.2} />
-            </button>
-          </div>
-          <div className="form-grid full">
-            <div className="f-field">
-              <label htmlFor="hName">{t('Full name')}</label>
-              <input id="hName" placeholder="Boikarabelo Ramaretlwa" value={hName} onChange={(e) => setHName(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="hDept">{t('Department')}</label>
-              <input id="hDept" placeholder="Technology Planning" value={hDept} onChange={(e) => setHDept(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="hPhone">{t('Personal WhatsApp')}</label>
-              <input id="hPhone" placeholder="+267 71 000 000" value={hPhone} onChange={(e) => setHPhone(e.target.value)} />
-            </div>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-ghost" onClick={closeModal}>
-              {t('Cancel')}
-            </button>
-            <button className="btn btn-violet" onClick={saveHost}>
-              {t('Add host')}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className={'modal-bg' + (modal === 'adminModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
-        <div className="modal" role="dialog" aria-modal="true" aria-label={t('Add sub-admin')}>
-          <div className="modal-head">
-            <h3>{t('Add sub-admin')}</h3>
-            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
-              <X size={14} strokeWidth={2.2} />
-            </button>
-          </div>
-          <div className="form-grid full">
-            <div className="f-field">
-              <label htmlFor="aName">{t('Name')}</label>
-              <input id="aName" value={aName} onChange={(e) => setAName(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="aUser">{t('Username')}</label>
-              <input id="aUser" autoComplete="off" value={aUser} onChange={(e) => setAUser(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="aPass">{t('Password')}</label>
-              <input
-                id="aPass"
-                type="password"
-                autoComplete="new-password"
-                placeholder={t('At least 10 characters')}
-                value={aPass}
-                onChange={(e) => setAPass(e.target.value)}
-              />
-            </div>
-            <div className="f-field">
-              <label htmlFor="aRole">{t('Role')}</label>
-              <select id="aRole" value={aRole} onChange={(e) => setARole(e.target.value)}>
-                {ADMIN_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {t(ROLE_LABEL[r])}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-ghost" onClick={closeModal}>
-              {t('Cancel')}
-            </button>
-            <button className="btn btn-violet" onClick={saveAdmin}>
-              {t('Add sub-admin')}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className={'modal-bg' + (modal === 'resetModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
-        <div className="modal" role="dialog" aria-modal="true" aria-label={t('Reset password')}>
-          <div className="modal-head">
-            <h3>{t('Reset password')}</h3>
-            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
-              <X size={14} strokeWidth={2.2} />
-            </button>
-          </div>
-          <p className="mini-note">
-            {t('Set a new password for {name} ({username}). They will be signed out and must use the new password.', {
-              name: resetTarget?.name || '',
-              username: resetTarget?.username || '',
-            })}
-          </p>
-          <div className="form-grid full">
-            <div className="f-field">
-              <label htmlFor="resetPass">{t('New password')}</label>
-              <input id="resetPass" type="password" autoComplete="new-password" placeholder={t('At least 10 characters')} value={resetPass} onChange={(e) => setResetPass(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="resetConfirm">{t('Confirm new password')}</label>
-              <input id="resetConfirm" type="password" autoComplete="new-password" value={resetConfirm} onChange={(e) => setResetConfirm(e.target.value)} />
-            </div>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-ghost" onClick={closeModal}>
-              {t('Cancel')}
-            </button>
-            <button className="btn btn-violet" onClick={resetAdminPassword}>
-              {t('Reset password')}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className={'modal-bg' + (modal === 'visitModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
-        <div className="modal" role="dialog" aria-modal="true" aria-label={t('New visit request')}>
-          <div className="modal-head">
-            <h3>{t('New visit request')}</h3>
-            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
-              <X size={14} strokeWidth={2.2} />
-            </button>
-          </div>
-          <div className="form-grid full">
-            <div className="f-field">
-              <label htmlFor="vName">{t('Visitor name')}</label>
-              <input id="vName" placeholder={t('Full name')} value={vName} onChange={(e) => setVName(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="vCompany">{t('Company')}</label>
-              <input id="vCompany" placeholder={t('Company / organisation')} value={vCompany} onChange={(e) => setVCompany(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="vHost">{t('Host')}</label>
-              <select id="vHost" value={vHost} onChange={(e) => setVHost(e.target.value)}>
-                {hosts.map((h) => (
-                  <option value={h.name} key={h.id}>
-                    {h.name}
-                    {h.dept && h.dept !== '—' ? ` — ${h.dept}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="f-field">
-              <label htmlFor="vPurpose">{t('Purpose')}</label>
-              <input id="vPurpose" placeholder={t('Reason for the visit')} value={vPurpose} onChange={(e) => setVPurpose(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="vDate">{t('Date')}</label>
-              <input id="vDate" type="date" value={vDate} onChange={(e) => setVDate(e.target.value)} />
-            </div>
-            <div className="f-field">
-              <label htmlFor="vTime">{t('Time')}</label>
-              <input id="vTime" type="time" value={vTime} onChange={(e) => setVTime(e.target.value)} />
-            </div>
-          </div>
-          <div className="form-actions">
-            <button className="btn btn-ghost" onClick={closeModal}>
-              {t('Cancel')}
-            </button>
-            <button className="btn btn-violet" onClick={saveVisit}>
-              {t('Submit request')}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className={'modal-bg' + (modal === 'detailModal' ? ' on' : '')} onClick={(e) => e.target === e.currentTarget && closeModal()}>
-        <div className="modal" role="dialog" aria-modal="true" aria-label={detail?.title || t('Details')}>
-          <div className="modal-head">
-            <h3>{detail?.title || t('Details')}</h3>
-            <button className="modal-close" onClick={closeModal} aria-label={t('Close')}>
-              <X size={14} strokeWidth={2.2} />
-            </button>
-          </div>
-          <div className="modal-body">
-            {(detail?.rows || []).map(([k, v]) => (
-              <div className="detail-row" key={k}>
-                <span className="k">{t(k)}</span>
-                <span className="v">{v}</span>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </>

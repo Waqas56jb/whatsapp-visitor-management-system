@@ -1,25 +1,23 @@
-// The organisation's single WhatsApp number: status, linking QR, connect and disconnect.
-// super_admin only (see routes); the QR is never served without a login.
+// The company's own WhatsApp number: status, linking QR, connect and disconnect (company admin).
+// The QR is never served without a login, and only for the signed-in user's company.
 import { getCompanyWhatsAppStatus, hydrateCompanyCache, startCompanyWhatsApp, stopCompanyWhatsApp } from '../whatsapp/connection.js';
 import { Audit } from '../models/index.js';
-
-function actor(req) {
-  return req.user?.name || req.user?.username || 'Super admin';
-}
+import { actorName } from '../middleware/auth.js';
+import { tenantId } from '../tenant.js';
 
 export async function whatsappStatus(req, res) {
-  await hydrateCompanyCache();
-  res.json(getCompanyWhatsAppStatus(true));
+  await hydrateCompanyCache(tenantId());
+  res.json(getCompanyWhatsAppStatus(tenantId(), true));
 }
 
 export async function whatsappConnect(req, res) {
-  const status = await startCompanyWhatsApp();
-  await Audit.add({ actor: actor(req), action: 'Started WhatsApp linking', details: 'Company WhatsApp' });
+  const status = await startCompanyWhatsApp(tenantId());
+  await Audit.add({ actor: actorName(req), action: 'Started WhatsApp linking', details: 'Company WhatsApp' });
   res.json(status);
 }
 
 export async function whatsappDisconnect(req, res) {
-  const status = await stopCompanyWhatsApp();
-  await Audit.add({ actor: actor(req), action: 'Disconnected WhatsApp', details: 'Company WhatsApp' });
+  const status = await stopCompanyWhatsApp(tenantId());
+  await Audit.add({ actor: actorName(req), action: 'Disconnected WhatsApp', details: 'Company WhatsApp' });
   res.json(status);
 }

@@ -1,3 +1,6 @@
+// WhatsApp sessions, one per company: each company links its own WhatsApp number from its admin
+// panel. Company 1 (the original organisation) keeps its existing login folder, so the live link
+// survives the move to multi-company without a new QR scan.
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -8,160 +11,110 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
-import qrcodeTerminal from 'qrcode-terminal';
 import pino from 'pino';
-import { CompanyWhatsApp } from '../models/index.js';
+import { Company, CompanyWhatsApp } from '../models/index.js';
 import { clearAuthDir, hasSavedCreds, restoreAuthDir, snapshotAuthDir } from './companyAuth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const SERVER_ROOT = path.resolve(__dirname, '../..');
 export const AUTH_DIR = path.join(SERVER_ROOT, 'auth_info_baileys');
-export const QR_FILE = path.join(SERVER_ROOT, 'whatsapp-qr.png');
+const SESSIONS_DIR = path.join(SERVER_ROOT, 'auth_sessions');
 
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' });
-const sessions = new Map();
+const sessions = new Map(); // companyId -> session
 const startLocks = new Map();
+const caches = new Map(); // companyId -> { status, phone, wa_name, registered }
 
-const companyCache = {
-  status: 'disconnected',
-  phone: null,
-  wa_name: null,
-  registered: false,
-};
+export function authDirFor(companyId) {
+  return Number(companyId) === 1 ? AUTH_DIR : path.join(SESSIONS_DIR, `company-${Number(companyId)}`);
+}
 
-export async function hydrateCompanyCache() {
+function cacheFor(companyId) {
+  if (!caches.has(companyId)) caches.set(companyId, { status: 'disconnected', phone: null, wa_name: null, registered: false });
+  return caches.get(companyId);
+}
+
+export async function hydrateCompanyCache(companyId) {
+  const cache = cacheFor(companyId);
   try {
-    const row = await CompanyWhatsApp.get();
-    if (!row) return companyCache;
-    companyCache.status = row.status || 'disconnected';
-    companyCache.phone = row.phone || null;
-    companyCache.wa_name = row.wa_name || null;
-    companyCache.registered = Boolean(row.phone || row.status === 'connected' || row.keys?.['creds.json']);
-    return companyCache;
+    const row = await CompanyWhatsApp.get(companyId);
+    if (!row) return cache;
+    cache.status = row.status || 'disconnected';
+    cache.phone = row.phone || null;
+    cache.wa_name = row.wa_name || null;
+    cache.registered = Boolean(row.phone || row.status === 'connected' || row.keys?.['creds.json']);
   } catch (err) {
-    console.error('Company WhatsApp cache failed:', err.message);
-    return companyCache;
+    console.error(`Company ${companyId} WhatsApp cache failed:`, err.message);
   }
+  return cache;
 }
 
 function emptyStatus() {
-  return {
-    connected: false,
-    connecting: false,
-    qrAvailable: false,
-    qrDataUrl: null,
-    user: null,
-  };
+  return { connected: false, connecting: false, qrAvailable: false, qrDataUrl: null, user: null };
 }
 
-function authDirFor() {
-  return AUTH_DIR;
+// The socket of a company's linked number, or null.
+export function getSock(companyId) {
+  return sessions.get(Number(companyId))?.sock || null;
 }
 
-export function getSession(key = 'admin') {
-  return sessions.get(key) || null;
+// Tests attach an in-memory socket for a company (never used by the running server).
+export function useSocketForTests(companyId, sock) {
+  if (process.env.NODE_ENV === 'production') throw new Error('Not available in production');
+  sessions.set(Number(companyId), { companyId: Number(companyId), sock, generation: 0, status: { ...emptyStatus(), connected: true } });
 }
 
-// The organisation's single WhatsApp socket.
-export function getSock() {
-  return sessions.get('admin')?.sock || null;
+export function isConnected(companyId) {
+  return Boolean(sessions.get(Number(companyId))?.status?.connected);
 }
 
-function publicStatus(session, includeQr = false) {
+// For the platform health page: every running session.
+export function sessionSummary() {
+  return [...sessions.values()].map((s) => ({
+    companyId: s.companyId,
+    connected: Boolean(s.status.connected),
+    connecting: Boolean(s.status.connecting),
+    waitingForQr: Boolean(s.status.qrAvailable),
+  }));
+}
+
+export function getCompanyWhatsAppStatus(companyId, includeQr = false) {
+  const session = sessions.get(Number(companyId));
+  const cache = cacheFor(Number(companyId));
   const status = session?.status || emptyStatus();
+  const user = status.user || (cache.phone || cache.wa_name ? { id: cache.phone, name: cache.wa_name } : null);
+  const base = { user, phone: cache.phone || user?.id?.split(':')[0] || null, scope: 'company' };
+  if (status.connected) return { ...base, connected: true, connecting: false, reconnecting: false, qrAvailable: false, qrDataUrl: null };
+  const saved = cache.status === 'connected' || Boolean(cache.phone) || cache.registered;
+  if (saved && !status.qrAvailable && session) {
+    return { ...base, connected: true, connecting: false, reconnecting: true, qrAvailable: false, qrDataUrl: null };
+  }
   return {
-    connected: Boolean(status.connected),
+    ...base,
+    connected: false,
     connecting: Boolean(status.connecting),
+    reconnecting: false,
     qrAvailable: Boolean(status.qrAvailable && status.qrDataUrl),
-    qrDataUrl: includeQr && status.qrAvailable && !status.connected ? status.qrDataUrl : null,
-    user: status.user,
+    qrDataUrl: includeQr && status.qrAvailable ? status.qrDataUrl : null,
   };
 }
 
-export function getCompanyWhatsAppStatus(includeQr = false) {
-  const live = publicStatus(sessions.get('admin'), includeQr);
-  const saved = companyCache.status === 'connected' || Boolean(companyCache.phone) || companyCache.registered;
-  const user =
-    live.user ||
-    (companyCache.phone || companyCache.wa_name ? { id: companyCache.phone, name: companyCache.wa_name } : null);
-
-  if (live.connected) {
-    return {
-      connected: true,
-      connecting: false,
-      reconnecting: false,
-      qrAvailable: false,
-      qrDataUrl: null,
-      user,
-      phone: companyCache.phone || user?.id || null,
-      shared: true,
-      scope: 'company',
-    };
-  }
-
-  if (saved && !live.qrAvailable) {
-    return {
-      connected: true,
-      connecting: false,
-      reconnecting: true,
-      qrAvailable: false,
-      qrDataUrl: null,
-      user,
-      phone: companyCache.phone || user?.id || null,
-      shared: true,
-      scope: 'company',
-    };
-  }
-
-  return {
-    ...live,
-    user,
-    phone: companyCache.phone,
-    shared: true,
-    scope: 'company',
-  };
-}
-
-async function persistCompanyLink(extras = {}) {
-  const phone = extras.phone ?? companyCache.phone ?? null;
-  const wa_name = extras.wa_name ?? companyCache.wa_name ?? null;
-  const status = extras.status || companyCache.status || 'disconnected';
-  if (extras.clear) {
-    companyCache.status = 'disconnected';
-    companyCache.phone = null;
-    companyCache.wa_name = null;
-    companyCache.registered = false;
+async function persistLink(companyId, { status, phone = null, wa_name = null, clear = false }) {
+  const cache = cacheFor(companyId);
+  if (clear) {
+    Object.assign(cache, { status: 'disconnected', phone: null, wa_name: null, registered: false });
   } else {
-    companyCache.status = status;
-    if (phone) companyCache.phone = phone;
-    if (wa_name) companyCache.wa_name = wa_name;
-    if (status === 'connected') companyCache.registered = true;
+    cache.status = status;
+    if (phone) cache.phone = phone;
+    if (wa_name) cache.wa_name = wa_name;
+    if (status === 'connected') cache.registered = true;
   }
   try {
-    if (extras.clear) await CompanyWhatsApp.clear();
-    else await CompanyWhatsApp.saveLink({ status, phone, wa_name });
+    if (clear) await CompanyWhatsApp.clear(companyId);
+    else await CompanyWhatsApp.saveLink(companyId, { status, phone, wa_name });
   } catch (err) {
-    console.error('Company WhatsApp persist failed:', err.message);
+    console.error(`Company ${companyId} WhatsApp persist failed:`, err.message);
   }
-}
-
-async function persistLink(session, extras = {}) {
-  const phone = extras.phone ?? session?.status?.user?.id?.split(':')[0] ?? null;
-  const wa_name = extras.wa_name ?? session?.status?.user?.name ?? null;
-  const status =
-    extras.status ||
-    (session?.status?.connected ? 'connected' : session?.status?.connecting ? 'connecting' : 'disconnected');
-  if (session?.key === 'admin') {
-    await persistCompanyLink({ status, phone, wa_name, clear: extras.clear });
-  }
-}
-
-async function saveAdminQrFile(qr) {
-  await QRCode.toFile(QR_FILE, qr, { width: 512, margin: 2 });
-}
-
-function clearAdminQrFile() {
-  if (fs.existsSync(QR_FILE)) fs.unlinkSync(QR_FILE);
 }
 
 function isLoggedOut(code) {
@@ -173,15 +126,13 @@ function reconnectDelay(code) {
   return 2500;
 }
 
-async function startSessionInner(key, options = {}) {
-  const existing = sessions.get(key);
+async function startSessionInner(companyId, options = {}) {
+  const existing = sessions.get(companyId);
   if (existing?.starting) return existing.sock;
   if (existing?.sock && (existing.status.connected || existing.status.connecting)) return existing.sock;
 
   const session = {
-    key,
-    accountId: options.accountId || null,
-    hostId: options.hostId || null,
+    companyId,
     listenMessages: options.listenMessages !== false,
     starting: true,
     generation: (existing?.generation || 0) + 1,
@@ -189,26 +140,22 @@ async function startSessionInner(key, options = {}) {
     status: emptyStatus(),
   };
   session.status.connecting = true;
-  sessions.set(key, session);
+  sessions.set(companyId, session);
   const myGen = session.generation;
-  const dir = authDirFor(key);
+  const dir = authDirFor(companyId);
+  const cache = await hydrateCompanyCache(companyId);
 
   await fs.promises.mkdir(dir, { recursive: true });
-  if (key === 'admin' && !hasSavedCreds(dir)) {
-    await restoreAuthDir(dir);
-  }
+  if (!hasSavedCreds(dir)) await restoreAuthDir(companyId, dir).catch((err) => console.error('Auth restore failed:', err.message));
 
   const { state, saveCreds } = await useMultiFileAuthState(dir);
   const persistCreds = async () => {
     await saveCreds();
-    if (key === 'admin') await snapshotAuthDir(dir).catch((err) => console.error('Auth snapshot failed:', err.message));
+    await snapshotAuthDir(companyId, dir).catch((err) => console.error('Auth snapshot failed:', err.message));
   };
 
   const sock = makeWASocket({
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger),
-    },
+    auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
     logger,
     browser: Browsers.macOS('Chrome'),
     markOnlineOnConnect: false,
@@ -221,109 +168,111 @@ async function startSessionInner(key, options = {}) {
   sock.ev.on('creds.update', persistCreds);
 
   sock.ev.on('connection.update', async (update) => {
-    const current = sessions.get(key);
+    const current = sessions.get(companyId);
     if (!current || current.generation !== myGen) return;
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      const paired = hasSavedCreds(dir) || companyCache.registered || companyCache.status === 'connected';
+      const paired = hasSavedCreds(dir) || cache.registered || cache.status === 'connected';
       if (paired) {
-        console.log(`WhatsApp (${key}) already paired — ignoring replacement QR`);
+        console.log(`WhatsApp (company ${companyId}) already paired — ignoring replacement QR`);
       } else {
-        if (key === 'admin') {
-          console.log('\nScan this QR with WhatsApp → Linked Devices → Link a device\n');
-          qrcodeTerminal.generate(qr, { small: true });
-          await saveAdminQrFile(qr).catch((err) => console.error('Could not write WhatsApp QR image:', err.message));
-        }
         current.status.qrDataUrl = await QRCode.toDataURL(qr, { width: 512, margin: 2 }).catch(() => null);
         current.status.qrAvailable = Boolean(current.status.qrDataUrl);
         current.status.connecting = true;
         current.status.connected = false;
-        await persistLink(current, { status: 'connecting' });
+        await persistLink(companyId, { status: 'connecting' });
       }
     }
 
     if (connection === 'open') {
       current.starting = false;
-      current.status.connected = true;
-      current.status.connecting = false;
-      current.status.qrAvailable = false;
-      current.status.qrDataUrl = null;
-      current.status.user = {
-        id: sock.user?.id || null,
-        name: sock.user?.name || sock.user?.verifiedName || null,
-      };
-      if (key === 'admin') {
-        clearAdminQrFile();
-        await persistCreds().catch(() => {});
-      }
-      await persistLink(current, { status: 'connected' });
-      console.log(`WhatsApp linked (${key}) as ${current.status.user.name || current.status.user.id}`);
+      Object.assign(current.status, { connected: true, connecting: false, qrAvailable: false, qrDataUrl: null });
+      current.status.user = { id: sock.user?.id || null, name: sock.user?.name || sock.user?.verifiedName || null };
+      await persistCreds().catch(() => {});
+      await persistLink(companyId, {
+        status: 'connected',
+        phone: current.status.user.id?.split(':')[0] || null,
+        wa_name: current.status.user.name,
+      });
+      console.log(`WhatsApp linked (company ${companyId}) as ${current.status.user.name || current.status.user.id}`);
     }
 
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       const loggedOut = isLoggedOut(code);
-      console.warn(`WhatsApp disconnected (${key})`, loggedOut ? '(logged out)' : `(code ${code || 'unknown'})`);
+      console.warn(`WhatsApp disconnected (company ${companyId})`, loggedOut ? '(logged out)' : `(code ${code || 'unknown'})`);
       current.starting = false;
       current.sock = null;
-      current.status.connected = false;
-      current.status.connecting = !loggedOut;
-      current.status.qrAvailable = false;
-      current.status.qrDataUrl = null;
-
+      Object.assign(current.status, { connected: false, connecting: !loggedOut, qrAvailable: false, qrDataUrl: null });
       if (loggedOut) {
         await clearAuthDir(dir);
-        if (key === 'admin') clearAdminQrFile();
-        await persistLink(current, { status: 'disconnected', phone: null, wa_name: null, clear: true });
-      } else if (hasSavedCreds(dir) || companyCache.status === 'connected') {
-        await persistLink(current, { status: 'connected' });
+        await persistLink(companyId, { clear: true });
       }
-
       setTimeout(() => {
-        startSession(key, {
-          listenMessages: current.listenMessages,
-          accountId: current.accountId,
-          hostId: current.hostId,
-        }).catch((err) => console.error(`WhatsApp reconnect failed (${key}):`, err.message));
+        const latest = sessions.get(companyId);
+        if (!latest || latest.generation !== myGen) return; // stopped or paused meanwhile
+        startSession(companyId, { listenMessages: current.listenMessages }).catch((err) =>
+          console.error(`WhatsApp reconnect failed (company ${companyId}):`, err.message)
+        );
       }, reconnectDelay(code));
     }
   });
 
   if (session.listenMessages) {
     const { attachMessageHandler } = await import('./messageHandler.js');
-    attachMessageHandler(sock, { accountId: session.accountId, hostId: session.hostId, key });
+    attachMessageHandler(sock, { companyId });
   }
-
   return sock;
 }
 
-export async function startSession(key, options = {}) {
-  const prev = startLocks.get(key) || Promise.resolve();
-  const next = prev.catch(() => {}).then(() => startSessionInner(key, options));
-  startLocks.set(key, next);
+export async function startSession(companyId, options = {}) {
+  const id = Number(companyId);
+  const prev = startLocks.get(id) || Promise.resolve();
+  const next = prev.catch(() => {}).then(() => startSessionInner(id, options));
+  startLocks.set(id, next);
   return next;
 }
 
-export async function startWhatsApp(options = {}) {
-  await hydrateCompanyCache();
-  return startSession('admin', { listenMessages: options.listenMessages !== false });
+// On boot: company 1 always (as before), and every other active company with a saved login.
+export async function startAllWhatsApp() {
+  const ids = new Set();
+  const company1 = await Company.findById(1).catch(() => null);
+  if (company1?.status === 'active') ids.add(1);
+  const linked = await CompanyWhatsApp.listWithCredentials().catch(() => []);
+  for (const row of linked) {
+    const company = await Company.findById(row.company_id).catch(() => null);
+    if (company?.status === 'active') ids.add(Number(row.company_id));
+  }
+  for (const id of ids) {
+    await startSession(id, { listenMessages: true }).catch((err) => console.error(`WhatsApp start failed (company ${id}):`, err.message));
+  }
+  return [...ids];
 }
 
-export async function startCompanyWhatsApp() {
-  await hydrateCompanyCache();
-  await startWhatsApp({ listenMessages: true });
+// The company admin presses "Connect": start (or show) the linking QR.
+export async function startCompanyWhatsApp(companyId) {
+  const id = Number(companyId);
+  await startSession(id, { listenMessages: true });
   for (let i = 0; i < 12; i += 1) {
-    const status = getCompanyWhatsAppStatus(true);
+    const status = getCompanyWhatsAppStatus(id, true);
     if (status.connected || status.qrDataUrl) return status;
     await new Promise((resolve) => setTimeout(resolve, 400));
   }
-  return getCompanyWhatsAppStatus(true);
+  return getCompanyWhatsAppStatus(id, true);
 }
 
-export async function stopCompanyWhatsApp() {
-  const session = sessions.get('admin');
+function endSession(companyId) {
+  const session = sessions.get(companyId);
   if (session) session.generation = (session.generation || 0) + 1;
+  sessions.delete(companyId);
+  return session;
+}
+
+// Unlinks the number: logs out of WhatsApp and forgets the saved login.
+export async function stopCompanyWhatsApp(companyId) {
+  const id = Number(companyId);
+  const session = endSession(id);
   if (session?.sock) {
     try {
       await session.sock.logout();
@@ -335,9 +284,23 @@ export async function stopCompanyWhatsApp() {
       }
     }
   }
-  sessions.delete('admin');
-  await clearAuthDir(AUTH_DIR);
-  clearAdminQrFile();
-  await persistCompanyLink({ status: 'disconnected', phone: null, wa_name: null, clear: true });
-  return getCompanyWhatsAppStatus(false);
+  await clearAuthDir(authDirFor(id));
+  await persistLink(id, { clear: true });
+  return getCompanyWhatsAppStatus(id, false);
+}
+
+// Suspension: the bot goes quiet but the link is kept, so reactivation needs no new QR.
+export async function pauseCompanyWhatsApp(companyId) {
+  const session = endSession(Number(companyId));
+  try {
+    session?.sock?.end(undefined);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function resumeCompanyWhatsApp(companyId) {
+  const id = Number(companyId);
+  const row = await CompanyWhatsApp.get(id).catch(() => null);
+  if (id === 1 || row?.keys?.['creds.json']) await startSession(id, { listenMessages: true });
 }

@@ -1,26 +1,28 @@
+// Sending WhatsApp messages from the current company's linked number. The company comes from the
+// tenant context (a panel request or an incoming message), so one company can never send from
+// another company's number.
 import { ConversationLog } from '../models/index.js';
+import { meter } from '../services/metrics.js';
+import { optionalTenantId } from '../tenant.js';
 import { normalizePhone, phoneFromJid, toJid } from '../utils/phone.js';
 import { getSock } from './connection.js';
 
-async function logOutgoing(jid, text, accountId = null) {
+async function logOutgoing(jid, text) {
   const phone = phoneFromJid(toJid(jid));
   if (!phone) return;
+  meter('wa_messages_out');
   try {
-    await ConversationLog.add({
-      phone_number: phone,
-      direction: 'outgoing',
-      message_text: text || '',
-      account_id: accountId || null,
-    });
+    await ConversationLog.add({ phone_number: phone, direction: 'outgoing', message_text: text || '' });
   } catch (err) {
     console.error('Conversation outgoing log failed:', err.message);
   }
 }
 
-function readySock(accountId) {
-  const sock = getSock('admin') || getSock();
+function readySock() {
+  const companyId = optionalTenantId();
+  const sock = companyId ? getSock(companyId) : null;
   if (!sock) {
-    console.warn('WhatsApp send skipped — socket is not connected');
+    console.warn(`WhatsApp send skipped — company ${companyId || '?'} has no connected number`);
     return null;
   }
   return sock;
@@ -35,54 +37,38 @@ function destinationsFor(jid, options = {}) {
   return [...new Set(destinations.filter(Boolean))];
 }
 
-export async function sendText(jid, text, options = {}) {
+async function sendContent(jid, content, logText, options = {}) {
   try {
-    const accountId = options.accountId || null;
-    const sock = options.sock || readySock(accountId);
+    const sock = options.sock || readySock();
     if (!sock) return false;
-    const unique = destinationsFor(jid, options);
-    let lastError = null;
-    for (const to of unique) {
+    for (const to of destinationsFor(jid, options)) {
       try {
-        await sock.sendMessage(to, { text: String(text) });
-        await logOutgoing(to, String(text), accountId);
+        await sock.sendMessage(to, content);
+        await logOutgoing(to, logText);
         return true;
       } catch (err) {
-        lastError = err;
-        console.error(`sendText failed to ${to}:`, err.message);
+        console.error(`WhatsApp send failed to ${to}:`, err.message);
       }
     }
-    if (lastError) console.error('sendText failed:', lastError.message);
     return false;
   } catch (err) {
-    console.error('sendText failed:', err.message);
+    console.error('WhatsApp send failed:', err.message);
     return false;
   }
 }
 
-export async function sendImage(jid, imagePathOrBuffer, caption, options = {}) {
-  try {
-    const accountId = options.accountId || null;
-    const sock = options.sock || readySock(accountId);
-    if (!sock) return false;
-    const unique = destinationsFor(jid, options);
-    const image = Buffer.isBuffer(imagePathOrBuffer)
-      ? imagePathOrBuffer
-      : { url: imagePathOrBuffer };
-    for (const to of unique) {
-      try {
-        await sock.sendMessage(to, { image, caption: caption || undefined });
-        await logOutgoing(to, caption || '[image]', accountId);
-        return true;
-      } catch (err) {
-        console.error(`sendImage failed to ${to}:`, err.message);
-      }
-    }
-    return false;
-  } catch (err) {
-    console.error('sendImage failed:', err.message);
-    return false;
-  }
+export function sendText(jid, text, options = {}) {
+  return sendContent(jid, { text: String(text) }, String(text), options);
+}
+
+export function sendImage(jid, imagePathOrBuffer, caption, options = {}) {
+  const image = Buffer.isBuffer(imagePathOrBuffer) ? imagePathOrBuffer : { url: imagePathOrBuffer };
+  return sendContent(jid, { image, caption: caption || undefined }, caption || '[image]', options);
+}
+
+// A file, e.g. a calendar invite (.ics).
+export function sendDocument(jid, buffer, { fileName, mimetype, caption } = {}, options = {}) {
+  return sendContent(jid, { document: buffer, fileName, mimetype, caption: caption || undefined }, caption || `[file] ${fileName}`, options);
 }
 
 export async function sendTextToPhone(phone, text, options = {}) {
@@ -94,7 +80,7 @@ export async function sendTextToPhone(phone, text, options = {}) {
 export async function sendTextToPhoneDetailed(phone, text, options = {}) {
   const digits = normalizePhone(phone);
   if (!digits) return { sent: false, id: null };
-  const sock = options.sock || readySock(options.accountId || null);
+  const sock = options.sock || readySock();
   if (!sock) return { sent: false, id: null };
   const destinations = [];
   try {
@@ -107,11 +93,10 @@ export async function sendTextToPhoneDetailed(phone, text, options = {}) {
     console.warn('onWhatsApp lookup failed:', err.message);
   }
   destinations.push(`${digits}@s.whatsapp.net`);
-  const unique = [...new Set(destinations.filter(Boolean))];
-  for (const to of unique) {
+  for (const to of [...new Set(destinations.filter(Boolean))]) {
     try {
       const sent = await sock.sendMessage(to, { text: String(text) });
-      await logOutgoing(to, String(text), options.accountId || null);
+      await logOutgoing(to, String(text));
       return { sent: true, id: sent?.key?.id || null };
     } catch (err) {
       console.error(`sendTextToPhone failed to ${to}:`, err.message);

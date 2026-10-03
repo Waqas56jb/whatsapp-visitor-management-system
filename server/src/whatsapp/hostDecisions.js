@@ -92,8 +92,8 @@ const defaults = {
   decide: (args) => decideVisit(args),
   // Is this number in the middle of its own visitor booking, waiting for an answer?
   bookingWaiting: async (phone) => {
-    const { bookingWaiting } = await import('./visitorAgent.js');
-    return bookingWaiting(phone);
+    const { flowWaiting } = await import('./flowAgent.js');
+    return flowWaiting(phone);
   },
 };
 

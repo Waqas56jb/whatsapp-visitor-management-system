@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { QrCode, ShieldCheck } from 'lucide-react';
+import { MapPin, QrCode, ShieldCheck } from 'lucide-react';
 import api from '../api/client';
 import { LanguageSwitch, useI18n } from '../i18n';
 
 const STATUS = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected', used: 'Checked in', cancelled: 'Cancelled' };
 
-// The visitor's own pass page (public, no login): /pass/<token> from the WhatsApp QR link.
+// The visitor's own pass page (public, no login): /pass/<token> from the WhatsApp QR link, in the
+// company's own branding.
 export default function PassPage({ token }) {
   const { t } = useI18n();
   const [data, setData] = useState(null);
@@ -26,14 +27,19 @@ export default function PassPage({ token }) {
     };
   }, [token]);
 
+  const org = data?.organisation;
+  useEffect(() => {
+    if (org?.name) document.title = `${org.name} — ${t('Visitor pass')}`;
+  }, [org?.name]);
+
   return (
-    <div className="pass-page">
+    <div className="pass-page" style={org?.primaryColor ? { '--violet-2': org.primaryColor } : undefined}>
       <div className="pass-lang">
         <LanguageSwitch />
       </div>
       <div className="pass-card">
         <div className="pass-brand">
-          <ShieldCheck size={20} /> Botho Innovations
+          {org?.logo ? <img className="pass-logo" src={org.logo} alt="" /> : <ShieldCheck size={20} />} {org?.name || t('Visitor pass')}
         </div>
         {error ? (
           <p className="gate-error">{error}</p>
@@ -43,11 +49,20 @@ export default function PassPage({ token }) {
           <>
             <span className={`badge ${STATUS[data.status] ? data.status : 'active'}`}>{t(STATUS[data.status] || data.status)}</span>
             <h1>{data.visitor}</h1>
-            {data.company ? <p className="pass-sub">{data.company}</p> : null}
+            {data.company && data.company !== '—' ? <p className="pass-sub">{data.company}</p> : null}
             <div className="detail-row">
               <span className="k">{t('Host')}</span>
-              <span className="v">{data.host}</span>
+              <span className="v">
+                {data.host}
+                {data.department && data.department !== '—' ? ` · ${data.department}` : ''}
+              </span>
             </div>
+            {data.office ? (
+              <div className="detail-row">
+                <span className="k">{t('Office')}</span>
+                <span className="v">{data.office}</span>
+              </div>
+            ) : null}
             <div className="detail-row">
               <span className="k">{t('Date / Time')}</span>
               <span className="v">
@@ -66,6 +81,11 @@ export default function PassPage({ token }) {
               <div className="detail-row">
                 <span className="k">{t('Backup PIN')}</span>
                 <span className="v">{data.pin}</span>
+              </div>
+            ) : null}
+            {org?.address ? (
+              <div className="pass-foot">
+                <MapPin size={16} /> {org.address}
               </div>
             ) : null}
             <div className="pass-foot">
